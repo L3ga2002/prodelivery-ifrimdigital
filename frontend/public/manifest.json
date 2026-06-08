@@ -1,0 +1,28 @@
+{
+  "short_name": "ProDelivery",
+  "name": "ProDelivery - Platformă Livrări",
+  "description": "Aplicație profesională pentru managementul livrărilor",
+  "icons": [
+    {
+      "src": "icons/icon-192x192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512x512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "start_url": "/login",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#2563EB",
+  "background_color": "#F8FAFC",
+  "categories": ["business", "productivity"],
+  "lang": "ro",
+  "prefer_related_applications": false
+}

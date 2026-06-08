@@ -1,0 +1,370 @@
+/* ProDelivery App Styles */
+
+/* Driver action buttons */
+.driver-btn {
+  height: 4rem;
+  font-size: 1.125rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  width: 100%;
+  border-radius: 0.75rem;
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+  transition: transform 0.15s ease;
+}
+
+.driver-btn:active {
+  transform: scale(0.95);
+}
+
+/* Mobile optimizations */
+@media (max-width: 768px) {
+  .mobile-full-height {
+    height: 100dvh;
+  }
+}
+
+/* Status colors */
+.status-new {
+  background-color: rgb(254 249 195);
+  color: rgb(133 77 14);
+  border-color: rgb(253 224 71);
+}
+
+.status-assigned {
+  background-color: rgb(219 234 254);
+  color: rgb(30 64 175);
+  border-color: rgb(147 197 253);
+}
+
+.status-accepted {
+  background-color: rgb(243 232 255);
+  color: rgb(107 33 168);
+  border-color: rgb(216 180 254);
+}
+
+.status-picked-up {
+  background-color: rgb(255 237 213);
+  color: rgb(154 52 18);
+  border-color: rgb(253 186 116);
+}
+
+.status-delivered {
+  background-color: rgb(220 252 231);
+  color: rgb(22 101 52);
+  border-color: rgb(134 239 172);
+}
+
+/* Card hover effects */
+.hover-lift {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px -5px rgb(0 0 0 / 0.1);
+}
+
+/* Leaflet map container */
+.leaflet-container {
+  font-family: var(--font-body);
+}
+
+.leaflet-popup-content {
+  margin: 12px;
+}
+
+.leaflet-popup-content-wrapper {
+  border-radius: 8px;
+}
+
+/* Custom scrollbar for webkit browsers */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(var(--muted));
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* Animation for loading spinner */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Pulse animation for notifications */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Premium logistics polish */
+.control-surface {
+  border: 1px solid hsl(var(--border));
+  background:
+    linear-gradient(180deg, hsl(var(--card)) 0%, hsl(var(--card) / 0.92) 100%);
+  box-shadow: 0 18px 45px -32px rgb(15 23 42 / 0.55);
+}
+
+.dark .control-surface {
+  box-shadow: 0 18px 60px -36px rgb(15 23 42 / 0.95);
+}
+
+.premium-card {
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease, background-color 180ms ease;
+}
+
+.premium-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 18px 38px -28px rgb(15 23 42 / 0.55);
+}
+
+.tracing-timer {
+  position: relative;
+  overflow: hidden;
+}
+
+.tracing-timer::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(90deg, rgb(37 99 235), rgb(20 184 166), rgb(37 99 235));
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.tracing-timer.timer-late::before {
+  background: linear-gradient(90deg, rgb(225 29 72), rgb(251 146 60), rgb(225 29 72));
+  animation: pulse 1.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.delivery-map-div-icon {
+  background: transparent;
+  border: 0;
+}
+
+.delivery-map-marker {
+  position: relative;
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none;
+  transform: none;
+}
+
+.delivery-map-marker-restaurant {
+  width: 24px;
+  height: 24px;
+}
+
+.delivery-map-marker-restaurant::before {
+  left: 6px;
+  top: 5px;
+  width: 15px;
+  height: 7px;
+}
+
+.delivery-map-marker-restaurant::after {
+  right: -4px;
+  bottom: -4px;
+  width: 9px;
+  height: 9px;
+}
+
+.delivery-map-marker::before {
+  content: none;
+  position: absolute;
+  left: 9px;
+  top: 7px;
+  width: 22px;
+  height: 10px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.42);
+  filter: blur(0.2px);
+}
+
+.delivery-map-marker::after {
+  content: none;
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 2px solid white;
+  background: inherit;
+  box-shadow: inset 0 3px 5px rgb(255 255 255 / 0.25);
+}
+
+.delivery-map-marker-icon {
+  position: relative;
+  z-index: 1;
+  display: block;
+  line-height: 1;
+  transform: none;
+  filter: drop-shadow(0 2px 3px rgb(15 23 42 / 0.45));
+}
+
+.delivery-map-marker-icon svg {
+  width: 34px;
+  height: 34px;
+  display: block;
+}
+
+.delivery-map-marker-restaurant .delivery-map-marker-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.delivery-map-marker-driver-active {
+  color: rgb(16 185 129);
+}
+
+.delivery-map-marker-driver-delivery {
+  color: rgb(37 99 235);
+}
+
+.delivery-map-marker-driver-break {
+  color: rgb(245 158 11);
+}
+
+.delivery-map-marker-driver-offline {
+  color: rgb(100 116 139);
+}
+
+.delivery-map-marker-restaurant-active {
+  color: rgb(16 185 129);
+}
+
+.delivery-map-marker-restaurant-paused {
+  color: rgb(249 115 22);
+}
+
+.delivery-map-legend-icon {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 2px solid white;
+  border-radius: 10px;
+  box-shadow: 0 8px 18px -12px rgb(15 23 42 / 0.8), inset 0 5px 8px rgb(255 255 255 / 0.32), inset 0 -8px 10px rgb(15 23 42 / 0.18);
+}
+
+.delivery-map-legend-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.delivery-map-legend-driver-active {
+  background: linear-gradient(135deg, rgb(16 185 129), rgb(5 150 105));
+}
+
+.delivery-map-legend-driver-delivery {
+  background: linear-gradient(135deg, rgb(37 99 235), rgb(29 78 216));
+}
+
+.delivery-map-legend-driver-break {
+  background: linear-gradient(135deg, rgb(245 158 11), rgb(217 119 6));
+}
+
+.delivery-map-legend-driver-offline {
+  background: linear-gradient(135deg, rgb(100 116 139), rgb(51 65 85));
+}
+
+.delivery-map-legend-restaurant {
+  background: linear-gradient(135deg, rgb(16 185 129), rgb(5 150 105));
+}
+
+.delivery-map-marker-status-dot {
+  position: absolute;
+  right: -2px;
+  top: -1px;
+  z-index: 2;
+  width: 13px;
+  height: 13px;
+  border-radius: 999px;
+  border: 2px solid white;
+  box-shadow: 0 6px 12px -8px rgb(15 23 42 / 0.9);
+}
+
+.delivery-map-marker-status-dot-active {
+  background: rgb(34 197 94);
+}
+
+.delivery-map-marker-status-dot-delivery {
+  background: rgb(59 130 246);
+}
+
+.delivery-map-marker-status-dot-break {
+  background: rgb(245 158 11);
+}
+
+.delivery-route-line {
+  filter: drop-shadow(0 4px 5px rgb(15 23 42 / 0.55));
+}
+
+.dark .bg-white,
+.dark .bg-slate-50,
+.dark .bg-gray-50 {
+  color: hsl(var(--foreground));
+}
+
+.dark .leaflet-tile {
+  filter: brightness(0.68) contrast(1.15) saturate(0.82);
+}
+
+.dark input,
+.dark textarea,
+.dark select {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
+.delivery-map-marker-status-dot-offline {
+  background: rgb(148 163 184);
+}
+
+.admin-tabs-scroll {
+  scrollbar-width: thin;
+}
+
+@media (max-width: 768px) {
+  [data-testid="admin-dashboard"] .leaflet-container {
+    min-height: 320px;
+  }
+}

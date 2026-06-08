@@ -1,0 +1,169 @@
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-heading: 'Barlow Condensed', sans-serif;
+  --font-body: 'Public Sans', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: hsl(var(--background));
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+}
+
+code, .mono {
+  font-family: var(--font-mono);
+}
+
+@layer base {
+  :root {
+    --background: 220 20% 97%;
+    --foreground: 220 40% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 40% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 40% 10%;
+    --primary: 215 75% 22%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 24 95% 53%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 220 15% 93%;
+    --muted-foreground: 220 10% 45%;
+    --accent: 24 95% 53%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 155 75% 40%;
+    --success-foreground: 0 0% 100%;
+    --border: 220 15% 88%;
+    --input: 220 15% 88%;
+    --ring: 24 95% 53%;
+    --radius: 0.625rem;
+  }
+
+  .dark {
+    --background: 220 30% 6%;
+    --foreground: 220 20% 95%;
+    --card: 220 25% 10%;
+    --card-foreground: 220 20% 95%;
+    --popover: 220 25% 10%;
+    --popover-foreground: 220 20% 95%;
+    --primary: 24 95% 53%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 215 75% 22%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 220 20% 15%;
+    --muted-foreground: 220 15% 60%;
+    --accent: 24 95% 53%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 155 75% 40%;
+    --success-foreground: 0 0% 100%;
+    --border: 220 20% 15%;
+    --input: 220 20% 15%;
+    --ring: 24 95% 53%;
+  }
+}
+
+@layer base {
+  html {
+    @apply bg-background;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Leaflet map styles */
+.leaflet-container {
+  height: 100%;
+  width: 100%;
+  border-radius: 0.5rem;
+}
+
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+}
+
+.leaflet-control-zoom a {
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  border-bottom-color: hsl(var(--border));
+}
+
+.leaflet-control-zoom a:hover {
+  background: hsl(var(--muted));
+}
+
+/* Status badge colors */
+.status-new {
+  @apply bg-yellow-100 text-yellow-800 border-yellow-300;
+}
+
+.status-assigned {
+  @apply bg-blue-100 text-blue-800 border-blue-300;
+}
+
+.status-accepted {
+  @apply bg-purple-100 text-purple-800 border-purple-300;
+}
+
+.status-picked-up {
+  @apply bg-orange-100 text-orange-800 border-orange-300;
+}
+
+.status-delivered {
+  @apply bg-green-100 text-green-800 border-green-300;
+}
+
+/* Driver action buttons */
+.driver-btn {
+  @apply h-16 text-lg font-bold uppercase tracking-wider w-full rounded-xl shadow-lg active:scale-95 transition-transform;
+}
+
+/* Mobile PWA styles */
+@media (max-width: 768px) {
+  .mobile-full-height {
+    height: 100dvh;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(var(--muted));
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
