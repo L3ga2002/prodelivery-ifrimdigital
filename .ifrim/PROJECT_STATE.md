@@ -46,6 +46,13 @@ Phase 2: client-review readiness and stabilization of existing flows.
 
 Do not treat this copy as production-ready. Do not start future-phase scope such as real live GPS, client ordering app, product catalog, Android app, or advanced analytics unless Catalin confirms client scope/payment.
 
+## Repository
+
+- GitHub repository: `https://github.com/L3ga2002/prodelivery-ifrimdigital`
+- Visibility: private
+- Initial push completed on 2026-06-10.
+- Remote must remain this dedicated ProDelivery repository unless Catalin explicitly approves a change.
+
 ## Security Status
 
 - P0/P1 security/backend issues from older reports are fixed in code and locally verified.
