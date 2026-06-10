@@ -29,7 +29,6 @@ import {
   Trash2,
   Save,
   X,
-  Eye,
   EyeOff,
   Layers,
   MousePointerClick,

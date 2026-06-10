@@ -201,39 +201,6 @@ export const AdminScheduleView = () => {
     });
   };
 
-  const isSelected = (dayKey, hour) => (editSlots[dayKey] || []).some((s) => s.start === hour);
-  const isAdminSlot = (dayKey, hour) => (editSlots[dayKey] || []).some((s) => s.start === hour && s.added_by === "admin");
-  const isDriverSlot = (dayKey, hour) => (editSlots[dayKey] || []).some((s) => s.start === hour && s.added_by !== "admin");
-  const isEmergencySlot = (dayKey, hour) => (editSlots[dayKey] || []).some((s) => s.start === hour && s.added_by === "emergency");
-
-  const quickAdjustDriverDay = (dayKey, amount) => {
-    setEditSlots((prev) => {
-      const daySlots = [...(prev[dayKey] || [])];
-      if (amount < 0) {
-        let remaining = Math.abs(amount);
-        const nextSlots = [];
-        for (const slot of daySlots) {
-          if (remaining > 0 && slot.added_by !== "emergency") {
-            remaining -= 1;
-            continue;
-          }
-          nextSlots.push(slot);
-        }
-        return { ...prev, [dayKey]: nextSlots };
-      }
-      const existingHours = new Set(daySlots.map((slot) => slot.start));
-      const additions = [];
-      for (const hour of ALL_HOURS) {
-        if (additions.length >= amount) break;
-        if (!existingHours.has(hour)) {
-          const endH = (parseInt(hour, 10) + 1) % 24;
-          additions.push({ start: hour, end: `${String(endH).padStart(2, "0")}:00`, added_by: "admin" });
-        }
-      }
-      return { ...prev, [dayKey]: [...daySlots, ...additions] };
-    });
-  };
-
   const saveSchedule = async () => {
     setSaving(true);
     try {

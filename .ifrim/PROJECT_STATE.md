@@ -35,9 +35,10 @@ ProDelivery is a local delivery management platform for Bacau. It has admin, res
 - `ifrim-quality-reviewer`: produced scorecard 63/100 on current local code.
 - `backend/tests/test_security_authorization.py`: passed 10/10 after P0/P1 and P2 security hardening.
 - `ifrim-security-reviewer`: no blocker found after security hardening in `AGENT_REPORTS/2026-06-10-215444-openclaw-security-rereview-after-hardening.md`.
-- `yarn lint`: passed with 0 errors and 42 warnings after adding frontend ESLint 9 flat config.
-- `yarn build`: passed after frontend lint/config change.
+- `yarn lint`: passed with 0 errors and 0 warnings after frontend lint cleanup.
+- `yarn build`: passed after frontend lint cleanup.
 - Browser preview: `http://127.0.0.1:3000/restaurant` verified with 0 console errors after frontend UI component fix.
+- Browser preview: `http://127.0.0.1:3000/login` and `http://127.0.0.1:3000/restaurant` verified with 0 console errors after frontend lint cleanup.
 
 ## Current Phase
 

@@ -20,17 +20,17 @@ Start here:
 Recommended next work:
 
 1. Keep Phase 2 focused on client-review readiness for existing Admin, Restaurant, Driver, schedules, zones, and order flows.
-2. Clean frontend ESLint warnings now that `yarn lint` is configured and passing with 0 errors.
-3. Clean backend lint/imports enough to make `flake8` useful as a quality gate.
-4. Stabilize backend test command so it works from one documented working directory.
-5. Address demo-vs-real risks before client review: mock Admin Settings, simulated live map, demo simulation, and onboarding password exposure.
-6. Re-run `ifrim-qa` after fixes.
+2. Clean backend lint/imports enough to make `flake8` useful as a quality gate.
+3. Stabilize backend test command so it works from one documented working directory.
+4. Address demo-vs-real risks before client review: mock Admin Settings, simulated live map, demo simulation, and onboarding password exposure.
+5. Re-run `ifrim-qa` after fixes.
 
 Recently resolved:
 
 - P0/P1 security/backend issues are fixed in code and locally verified.
 - Cookie auth hardening now uses `SameSite=Lax` plus strict origin checks for unsafe methods.
 - Login lockout no longer trusts spoofable `X-Forwarded-For`.
+- Frontend ESLint is configured and `yarn lint` passes with 0 errors and 0 warnings.
 - Security re-review report: `AGENT_REPORTS/2026-06-10-215444-openclaw-security-rereview-after-hardening.md`.
 
 Thread note:

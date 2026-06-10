@@ -45,7 +45,7 @@ Sources:
   - `frontend/src/pages/RestaurantApp.jsx`
   - `frontend/src/pages/DriverApp.jsx`
 - Status 2026-06-10: Frontend ESLint 9 is configured as a project-native command via `frontend/eslint.config.mjs` and `yarn lint`.
-- `yarn lint` currently passes with 0 errors and 42 warnings, mainly unused imports/variables in large components.
+- Status 2026-06-10: `yarn lint` passes with 0 errors and 0 warnings after removing unused imports/variables.
 - Backend tests are fragile depending on working directory and server availability.
 - Backend `flake8` currently fails on unused imports/style noise.
 - Frontend has nested ternaries that should be extracted into helpers/config maps.

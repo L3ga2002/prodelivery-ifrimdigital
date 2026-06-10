@@ -9,14 +9,6 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "../components/ui/table";
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -37,19 +29,14 @@ import {
   TabsList,
   TabsTrigger,
 } from "../components/ui/tabs";
-import { Switch } from "../components/ui/switch";
 import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import {
   LogOut,
-  MapPin,
   Users,
   RefreshCw,
   Truck,
-  Clock,
   Store,
-  Settings,
-  Timer,
   BarChart3,
   TrendingUp,
   Play,
@@ -85,32 +72,6 @@ import {
 } from "recharts";
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
-
-const getStatusBadge = (status) => {
-  const statusConfig = {
-    NEW: { label: "Nouă", className: "bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-950/40 dark:text-yellow-100 dark:border-yellow-900" },
-    PREPARING: { label: "Pregătire", className: "bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-950/40 dark:text-blue-100 dark:border-blue-900" },
-    READY: { label: "Gata", className: "bg-green-100 text-green-800 border-green-300 dark:bg-green-950/40 dark:text-green-100 dark:border-green-900" },
-    ASSIGNED: { label: "Alocată", className: "bg-purple-100 text-purple-800 border-purple-300 dark:bg-purple-950/40 dark:text-purple-100 dark:border-purple-900" },
-    ACCEPTED: { label: "Acceptată", className: "bg-indigo-100 text-indigo-800 border-indigo-300 dark:bg-indigo-950/40 dark:text-indigo-100 dark:border-indigo-900" },
-    PICKED_UP: { label: "Ridicată", className: "bg-orange-100 text-orange-800 border-orange-300 dark:bg-orange-950/40 dark:text-orange-100 dark:border-orange-900" },
-    DELIVERED: { label: "Livrată", className: "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-100 dark:border-emerald-900" },
-    CANCELLED: { label: "Anulată", className: "bg-red-100 text-red-800 border-red-300 dark:bg-red-950/40 dark:text-red-100 dark:border-red-900" },
-  };
-  const config = statusConfig[status] || { label: status, className: "" };
-  return <Badge className={`${config.className} border`}>{config.label}</Badge>;
-};
-
-const getSourceBadge = (source) => {
-  const colors = {
-    S: "bg-gray-100 text-gray-800 dark:bg-slate-800 dark:text-slate-100",
-    G: "bg-orange-100 text-orange-800 dark:bg-orange-950/40 dark:text-orange-100",
-    W: "bg-cyan-100 text-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-100",
-    B: "bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-100",
-  };
-  const names = { S: "Site", G: "Glovo", W: "Wolt", B: "Bolt" };
-  return <Badge className={colors[source] || "bg-gray-100"}>{names[source] || source}</Badge>;
-};
 
 const getDriverStatusMeta = (driver) => {
   let status = driver.operational_status;
@@ -1558,7 +1519,7 @@ const AdminDashboard = () => {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2" data-testid="simulation-steps">
-            {simSteps.map((step, i) => (
+            {simSteps.map((step) => (
               <div key={step.key} className={`flex items-center gap-3 p-3 rounded-lg transition-all duration-500 ${
                 step.status === "active" ? "bg-blue-50 border border-blue-200 scale-[1.02] dark:bg-blue-950/30 dark:border-blue-900" :
                 step.status === "done" ? "bg-green-50 border border-green-200 dark:bg-green-950/30 dark:border-green-900" :

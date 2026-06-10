@@ -3,7 +3,7 @@ import { useAuth } from "../context/AuthContext";
 import axios from "axios";
 import { toast } from "sonner";
 import { Button } from "../components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { Card, CardContent } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Textarea } from "../components/ui/textarea";
 import { Input } from "../components/ui/input";
@@ -19,8 +19,6 @@ import {
 } from "../components/ui/dialog";
 import {
   LogOut,
-  Package,
-  Clock,
   CheckCircle2,
   Truck,
   RefreshCw,
@@ -32,7 +30,6 @@ import {
   MapPin,
   XCircle,
   AlertTriangle,
-  Flame,
   Utensils,
   Power,
   TimerReset,
@@ -50,7 +47,6 @@ const ORDER_POLL_INTERVAL_MS = 5000;
 const NEW_ORDER_FLASH_MS = 4000;
 const TIMER_TICK_MS = 1000;
 const PREPARATION_OPTIONS_MINUTES = [5, 10, 15, 20, 25, 30];
-const PAUSE_OPTIONS = [15, 20, 30, 45, 60];
 const RESTAURANT_DAYS = [
   { key: "monday", label: "Luni" },
   { key: "tuesday", label: "Marți" },
@@ -172,7 +168,6 @@ const RestaurantApp = () => {
   const restaurantId = user?.restaurant_id;
   const [orders, setOrders] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [preparingOrder, setPreparingOrder] = useState(null);
   const [newOrderFlash, setNewOrderFlash] = useState(false);
   const [confirmReadyOrder, setConfirmReadyOrder] = useState(null);
   const [cancelOrder, setCancelOrder] = useState(null);
@@ -343,7 +338,6 @@ const RestaurantApp = () => {
         preparation_time: minutes
       });
       toast.success(`Timp pregătire setat: ${minutes} minute`);
-      setPreparingOrder(null);
       fetchOrders();
     } catch {
       toast.error("Eroare la setare timp");
@@ -426,7 +420,6 @@ const RestaurantApp = () => {
   }, [historySearch, orders]);
   const completedToday = orderGroups.delivered.length;
   const newCount = useMemo(() => orders.filter((order) => order.status === 'NEW').length, [orders]);
-  const preparingCount = useMemo(() => orders.filter((order) => order.status === 'PREPARING').length, [orders]);
   const readyCount = useMemo(() => orders.filter((order) => order.status === 'READY').length, [orders]);
   const pauseSeconds = getPauseSeconds({ pause_until: restaurantPauseUntil }, now);
 
