@@ -20,6 +20,7 @@ from models.driver import Driver
 router = APIRouter(prefix="/auth", tags=["auth"])
 FAILED_LOGIN_LIMIT = 5
 LOCKOUT_MINUTES = 15
+PUBLIC_REGISTRATION_ROLE = "driver"
 
 
 def _now_utc() -> datetime:
@@ -35,43 +36,53 @@ def _parse_dt(value: str | None) -> datetime | None:
         return None
 
 
-def _attempt_identifier(request: Request, email: str) -> str:
-    forwarded_for = request.headers.get("x-forwarded-for", "")
-    ip = forwarded_for.split(",")[0].strip() or (request.client.host if request.client else "unknown")
-    return f"{ip}:{email}"
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+def _attempt_identifiers(request: Request, email: str) -> list[str]:
+    normalized_email = email.strip().lower()
+    return [
+        f"ip:{_client_ip(request)}:{normalized_email}",
+        f"email:{normalized_email}",
+    ]
 
 
 async def _ensure_not_locked(request: Request, email: str) -> None:
-    attempt = await db.login_attempts.find_one({"identifier": _attempt_identifier(request, email)}, {"_id": 0})
-    locked_until = _parse_dt((attempt or {}).get("locked_until"))
-    if locked_until and locked_until > _now_utc():
-        raise HTTPException(status_code=429, detail="Prea multe încercări eșuate. Încearcă din nou mai târziu.")
+    attempts = db.login_attempts.find(
+        {"identifier": {"$in": _attempt_identifiers(request, email)}},
+        {"_id": 0},
+    )
+    async for attempt in attempts:
+        locked_until = _parse_dt(attempt.get("locked_until"))
+        if locked_until and locked_until > _now_utc():
+            raise HTTPException(status_code=429, detail="Prea multe încercări eșuate. Încearcă din nou mai târziu.")
 
 
 async def _record_failed_login(request: Request, email: str) -> None:
     now = _now_utc()
-    identifier = _attempt_identifier(request, email)
-    update = {
-        "$set": {"email": email, "last_failed_at": now.isoformat()},
-        "$inc": {"failed_count": 1},
-        "$setOnInsert": {"identifier": identifier, "created_at": now.isoformat()},
-    }
-    attempt = await db.login_attempts.find_one_and_update(
-        {"identifier": identifier},
-        update,
-        upsert=True,
-        return_document=ReturnDocument.AFTER,
-        projection={"_id": 0},
-    )
-    if int(attempt.get("failed_count", 0)) >= FAILED_LOGIN_LIMIT:
-        await db.login_attempts.update_one(
+    for identifier in _attempt_identifiers(request, email):
+        update = {
+            "$set": {"email": email, "last_failed_at": now.isoformat()},
+            "$inc": {"failed_count": 1},
+            "$setOnInsert": {"identifier": identifier, "created_at": now.isoformat()},
+        }
+        attempt = await db.login_attempts.find_one_and_update(
             {"identifier": identifier},
-            {"$set": {"locked_until": (now + timedelta(minutes=LOCKOUT_MINUTES)).isoformat()}},
+            update,
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+            projection={"_id": 0},
         )
+        if int(attempt.get("failed_count", 0)) >= FAILED_LOGIN_LIMIT:
+            await db.login_attempts.update_one(
+                {"identifier": identifier},
+                {"$set": {"locked_until": (now + timedelta(minutes=LOCKOUT_MINUTES)).isoformat()}},
+            )
 
 
 async def _clear_failed_logins(request: Request, email: str) -> None:
-    await db.login_attempts.delete_one({"identifier": _attempt_identifier(request, email)})
+    await db.login_attempts.delete_many({"identifier": {"$in": _attempt_identifiers(request, email)}})
 
 
 @router.post("/register")
@@ -80,13 +91,16 @@ async def register(user_data: UserCreate, request: Request, response: Response):
     existing = await db.users.find_one({"email": normalized_email})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
+    requested_role = (user_data.role or PUBLIC_REGISTRATION_ROLE).strip().lower()
+    if requested_role != PUBLIC_REGISTRATION_ROLE:
+        raise HTTPException(status_code=403, detail="Public registration only supports driver accounts")
 
     user = User(
         email=normalized_email,
         name=user_data.name,
-        role=user_data.role,
+        role=PUBLIC_REGISTRATION_ROLE,
         phone=user_data.phone,
-        restaurant_id=user_data.restaurant_id
+        restaurant_id=None
     )
 
     doc = user.model_dump()
@@ -95,13 +109,12 @@ async def register(user_data: UserCreate, request: Request, response: Response):
 
     await db.users.insert_one(doc)
 
-    if user_data.role == "driver":
-        driver = Driver(
-            user_id=user.id,
-            name=user.name,
-            phone=user_data.phone or ""
-        )
-        await db.drivers.insert_one(driver.model_dump())
+    driver = Driver(
+        user_id=user.id,
+        name=user.name,
+        phone=user_data.phone or ""
+    )
+    await db.drivers.insert_one(driver.model_dump())
 
     user_payload = await resolve_user_context(user.id)
     access_token = create_access_token(user_payload)

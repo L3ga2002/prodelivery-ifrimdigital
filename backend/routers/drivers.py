@@ -269,6 +269,8 @@ async def _create_and_send_verification(driver_id: str, user_id: str, email: str
 
 @router.get("")
 async def get_drivers(current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
     drivers = await db.drivers.find({"account_disabled": {"$ne": True}}, {"_id": 0}).to_list(100)
     enriched_drivers = []
     for driver in drivers:
@@ -280,6 +282,8 @@ async def get_drivers(current_user: dict = Depends(get_current_user)):
 
 @router.get("/rankings")
 async def get_driver_rankings(current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
     drivers = await db.drivers.find({"account_disabled": {"$ne": True}}, {"_id": 0}).to_list(100)
     rankings = []
     for driver in drivers:
@@ -306,10 +310,7 @@ async def get_my_ranking(current_user: dict = Depends(get_current_user)):
 
 @router.get("/{driver_id}")
 async def get_driver(driver_id: str, current_user: dict = Depends(get_current_user)):
-    driver = await db.drivers.find_one({"id": driver_id}, {"_id": 0})
-    if not driver:
-        raise HTTPException(status_code=404, detail="Driver not found")
-    return driver
+    return await _ensure_admin_or_self(driver_id, current_user)
 
 
 @router.get("/{driver_id}/dashboard")

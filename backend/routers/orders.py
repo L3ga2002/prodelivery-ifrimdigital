@@ -8,6 +8,66 @@ from models.order import Order, OrderCreate, AssignOrder, UpdateOrderStatus, Pre
 router = APIRouter(prefix="/orders", tags=["orders"])
 VALID_ORDER_STATUSES = ["NEW", "PREPARING", "READY", "ASSIGNED", "ACCEPTED", "PICKED_UP", "DELIVERED", "CANCELLED"]
 MIN_PREP_WHEN_NO_DRIVERS = 20
+RESTAURANT_MUTATION_STATUSES = {"PREPARING", "READY", "CANCELLED"}
+DRIVER_MUTATION_STATUSES = {"ACCEPTED", "PICKED_UP", "DELIVERED", "CANCELLED"}
+
+
+def _orders_query_for_user(current_user: dict) -> dict:
+    role = current_user.get("role")
+    if role == "admin":
+        return {}
+    if role == "restaurant" and current_user.get("restaurant_id"):
+        return {"restaurant_id": current_user["restaurant_id"]}
+    if role == "driver" and current_user.get("driver_id"):
+        return {"driver_id": current_user["driver_id"]}
+    raise HTTPException(status_code=403, detail="Not authorized")
+
+
+def _format_order_dates(order: dict) -> dict:
+    if isinstance(order.get("created_at"), str):
+        order["created_at"] = datetime.fromisoformat(order["created_at"])
+    if isinstance(order.get("updated_at"), str):
+        order["updated_at"] = datetime.fromisoformat(order["updated_at"])
+    return order
+
+
+def _ensure_order_read_allowed(order: dict, current_user: dict) -> None:
+    role = current_user.get("role")
+    if role == "admin":
+        return
+    if role == "restaurant" and current_user.get("restaurant_id") == order.get("restaurant_id"):
+        return
+    if role == "driver" and current_user.get("driver_id") == order.get("driver_id"):
+        return
+    raise HTTPException(status_code=403, detail="Not authorized")
+
+
+def _ensure_restaurant_order_mutation_allowed(order: dict, current_user: dict) -> None:
+    role = current_user.get("role")
+    if role == "admin":
+        return
+    if role == "restaurant" and current_user.get("restaurant_id") == order.get("restaurant_id"):
+        return
+    raise HTTPException(status_code=403, detail="Not authorized")
+
+
+def _ensure_status_mutation_allowed(order: dict, status: str, current_user: dict) -> None:
+    role = current_user.get("role")
+    if role == "admin":
+        return
+    if (
+        role == "restaurant"
+        and current_user.get("restaurant_id") == order.get("restaurant_id")
+        and status in RESTAURANT_MUTATION_STATUSES
+    ):
+        return
+    if (
+        role == "driver"
+        and current_user.get("driver_id") == order.get("driver_id")
+        and status in DRIVER_MUTATION_STATUSES
+    ):
+        return
+    raise HTTPException(status_code=403, detail="Not authorized")
 
 
 def build_shapely_polygon(coords):
@@ -94,17 +154,16 @@ async def finalize_delivered_order(order: dict | None) -> None:
 
 @router.get("")
 async def get_orders(current_user: dict = Depends(get_current_user)):
-    orders = await db.orders.find({}, {"_id": 0}).to_list(1000)
-    for order in orders:
-        if isinstance(order.get('created_at'), str):
-            order['created_at'] = datetime.fromisoformat(order['created_at'])
-        if isinstance(order.get('updated_at'), str):
-            order['updated_at'] = datetime.fromisoformat(order['updated_at'])
-    return orders
+    orders = await db.orders.find(_orders_query_for_user(current_user), {"_id": 0}).to_list(1000)
+    return [_format_order_dates(order) for order in orders]
 
 
 @router.get("/driver/{driver_id}")
 async def get_driver_orders(driver_id: str, current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") != "admin" and not (
+        current_user.get("role") == "driver" and current_user.get("driver_id") == driver_id
+    ):
+        raise HTTPException(status_code=403, detail="Not authorized")
     orders = await db.orders.find(
         {"driver_id": driver_id, "status": {"$nin": ["DELIVERED"]}},
         {"_id": 0}
@@ -114,6 +173,10 @@ async def get_driver_orders(driver_id: str, current_user: dict = Depends(get_cur
 
 @router.get("/restaurant/{restaurant_id}")
 async def get_restaurant_orders(restaurant_id: str, current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") != "admin" and not (
+        current_user.get("role") == "restaurant" and current_user.get("restaurant_id") == restaurant_id
+    ):
+        raise HTTPException(status_code=403, detail="Not authorized")
     orders = await db.orders.find(
         {"restaurant_id": restaurant_id},
         {"_id": 0}
@@ -126,11 +189,17 @@ async def get_order(order_id: str, current_user: dict = Depends(get_current_user
     order = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+    _ensure_order_read_allowed(order, current_user)
     return order
 
 
 @router.post("")
 async def create_order(order_data: OrderCreate, current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") not in ["admin", "restaurant"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    if current_user.get("role") == "restaurant" and current_user.get("restaurant_id") != order_data.restaurant_id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
     restaurant = await db.restaurants.find_one({"id": order_data.restaurant_id}, {"_id": 0})
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
@@ -184,11 +253,16 @@ async def create_order(order_data: OrderCreate, current_user: dict = Depends(get
 
 @router.put("/{order_id}/assign")
 async def assign_order(order_id: str, data: AssignOrder, current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
     driver = await db.drivers.find_one({"id": data.driver_id}, {"_id": 0})
     if not driver:
         raise HTTPException(status_code=404, detail="Driver not found")
 
     order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
     new_status = "ASSIGNED"
     if order and order.get("status") == "READY":
         new_status = "ASSIGNED"
@@ -214,6 +288,11 @@ async def assign_order(order_id: str, data: AssignOrder, current_user: dict = De
 
 @router.put("/{order_id}/preparing")
 async def set_preparing(order_id: str, data: PreparationTime, current_user: dict = Depends(get_current_user)):
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    _ensure_restaurant_order_mutation_allowed(order, current_user)
+
     available_drivers = await get_available_driver_count()
     if available_drivers == 0 and data.preparation_time < MIN_PREP_WHEN_NO_DRIVERS:
         raise HTTPException(status_code=409, detail=f"Nu există livratori disponibili acum. Setează minimum {MIN_PREP_WHEN_NO_DRIVERS} minute sau așteaptă un livrator activ.")
@@ -236,7 +315,9 @@ async def set_preparing(order_id: str, data: PreparationTime, current_user: dict
 
 @router.get("/restaurant/{restaurant_id}/prep-availability")
 async def get_restaurant_preparation_availability(restaurant_id: str, current_user: dict = Depends(get_current_user)):
-    if current_user["role"] == "restaurant" and current_user.get("restaurant_id") != restaurant_id:
+    if current_user.get("role") not in ["admin", "restaurant"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    if current_user.get("role") == "restaurant" and current_user.get("restaurant_id") != restaurant_id:
         raise HTTPException(status_code=403, detail="Not authorized")
     available_drivers = await get_available_driver_count()
     return {
@@ -252,8 +333,7 @@ async def create_problem_order(order_id: str, data: ProblemOrderCreate, current_
     original = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not original:
         raise HTTPException(status_code=404, detail="Order not found")
-    if current_user["role"] == "restaurant" and current_user.get("restaurant_id") != original.get("restaurant_id"):
-        raise HTTPException(status_code=403, detail="Not authorized")
+    _ensure_restaurant_order_mutation_allowed(original, current_user)
     if data.problem_type not in ["missing_product", "new_product"]:
         raise HTTPException(status_code=400, detail="Tip problemă invalid")
     count = await db.orders.count_documents({})
@@ -299,6 +379,7 @@ async def set_ready(order_id: str, current_user: dict = Depends(get_current_user
     order = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+    _ensure_restaurant_order_mutation_allowed(order, current_user)
 
     now = datetime.now(timezone.utc)
     started_at_raw = order.get("preparation_started_at")
@@ -326,14 +407,18 @@ async def set_ready(order_id: str, current_user: dict = Depends(get_current_user
 @router.put("/{order_id}/status")
 async def update_order_status(order_id: str, data: UpdateOrderStatus, current_user: dict = Depends(get_current_user)):
     update_data = build_status_update_payload(data, current_user)
+    order = await load_order_for_status_update(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    _ensure_status_mutation_allowed(order, data.status, current_user)
 
     await db.orders.update_one({"id": order_id}, {"$set": update_data})
-    order = await load_order_for_status_update(order_id)
+    updated_order = await load_order_for_status_update(order_id)
 
     if data.status == "DELIVERED":
-        await finalize_delivered_order(order)
+        await finalize_delivered_order(updated_order)
 
     if data.status == "CANCELLED":
-        await clear_driver_assignment(order)
+        await clear_driver_assignment(updated_order)
 
     return {"message": "Status updated"}

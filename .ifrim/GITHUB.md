@@ -11,7 +11,7 @@ ProDelivery work done with Codex/OpenClaw must use a new dedicated GitHub reposi
 - Display name idea: `ProDelivery IfrimDigital`
 - Visibility: private by default
 - Default branch: `main`
-- Local path: `C:\Users\mihai\OneDrive\Documente\IfrimDigital Projects\ProDelivery`
+- Local path: `C:\Users\mihai\OneDrive\Desktop\Ifrim Digital Proiecte\ProDelivery`
 
 ## Before First Push
 

@@ -75,7 +75,7 @@ def decode_token(token: str, expected_type: str) -> dict:
 
 def set_auth_cookies(request: Request, response: Response, access_token: str, refresh_token: str) -> None:
     secure_cookie = request.url.scheme == "https"
-    same_site = "none" if secure_cookie else "lax"
+    same_site = "lax"
 
     response.set_cookie(
         key=ACCESS_TOKEN_COOKIE,

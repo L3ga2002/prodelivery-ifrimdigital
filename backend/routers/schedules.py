@@ -52,6 +52,16 @@ async def ensure_schedule_access(current_user: dict, driver_id: str) -> bool:
     return True
 
 
+async def ensure_schedule_read_access(current_user: dict, driver_id: str) -> None:
+    if current_user["role"] == "admin":
+        return
+    if current_user["role"] == "driver":
+        driver = await db.drivers.find_one({"user_id": current_user["user_id"]}, {"_id": 0})
+        if driver and driver["id"] == driver_id:
+            return
+    raise HTTPException(status_code=403, detail="Not authorized")
+
+
 def serialize_slots(slot_groups: dict) -> dict:
     return {day: [slot.model_dump() for slot in slots] for day, slots in slot_groups.items()}
 
@@ -287,6 +297,7 @@ async def build_driver_summary(driver: dict, week_start: str | None) -> dict:
 
 @router.get("/driver/{driver_id}")
 async def get_driver_schedules(driver_id: str, year: int = 2026, current_user: dict = Depends(get_current_user)):
+    await ensure_schedule_read_access(current_user, driver_id)
     schedules = await db.schedules.find(
         {"driver_id": driver_id, "week_start": {"$regex": f"^{year}"}},
         {"_id": 0}

@@ -128,3 +128,8 @@ frontend/node_modules/.cache/default-development/16.pack
 .ifrim/private/
 .ifrim/tmp/
 memory/test_credentials.md
+
+# Claude Code local/private state
+.claude/settings.local.json
+.claude/agent-memory-local/
+.claude/tmp/

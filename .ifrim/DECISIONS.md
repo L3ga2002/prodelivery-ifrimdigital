@@ -1,5 +1,14 @@
 # Decisions
 
+## 2026-06-09
+
+- Claude Code is added as an external IfrimDigital engineering specialist coordinated by Codex.
+- Codex remains the main coordinator for memory, preview, Git/GitHub, final decisions, and verification.
+- OpenClaw remains the local IfrimDigital agent team for routine specialist work.
+- Claude Code is used for independent review, deeper security/architecture analysis, QA summaries, and selected implementation only when explicitly requested.
+- Default Claude model is `sonnet`; use `opus` for architecture/security/deep debugging, `haiku` only for simple summaries, and `fable` only for the hardest long-running investigations.
+- Review-oriented Claude agents are read-only and must not inspect env files, private memory, uploads, or test credential notes.
+
 ## 2026-06-08
 
 - Codex remains the main coordinator/technical brain.

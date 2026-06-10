@@ -55,22 +55,17 @@ class BackendTester:
         })
 
     def test_seed_endpoint(self):
-        """Test 1: POST /api/seed -> 200 și răspuns valid"""
+        """Test 1: POST /api/seed anonim trebuie blocat"""
         try:
             response = self.session.post(f"{BACKEND_URL}/seed")
 
-            if response.status_code == 200:
-                data = response.json()
-                # Check if response contains expected seed data structure
-                if isinstance(data, dict) and ("message" in data or "status" in data or "users" in data):
-                    self.log_test("POST /api/seed", True, f"Status: {response.status_code}, Valid response structure", data)
-                else:
-                    self.log_test("POST /api/seed", False, f"Status: {response.status_code}, Invalid response structure", data)
+            if response.status_code in (401, 403):
+                self.log_test("POST /api/seed anonymous blocked", True, f"Status: {response.status_code}")
             else:
-                self.log_test("POST /api/seed", False, f"Status: {response.status_code}", response.text)
+                self.log_test("POST /api/seed anonymous blocked", False, f"Status: {response.status_code}", response.text)
 
         except Exception as e:
-            self.log_test("POST /api/seed", False, f"Exception: {str(e)}")
+            self.log_test("POST /api/seed anonymous blocked", False, f"Exception: {str(e)}")
 
     def test_admin_login(self):
         """Test 2: POST /api/auth/login admin -> 200"""

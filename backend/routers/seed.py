@@ -1,9 +1,9 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 from datetime import datetime, timezone, timedelta
 import os
 import secrets
 from database import db
-from auth import hash_password
+from auth import get_current_user, hash_password
 from models.user import User
 from models.driver import Driver
 from models.restaurant import Restaurant
@@ -11,6 +11,13 @@ from models.order import Order
 
 router = APIRouter(tags=["seed"])
 SYSTEM_RANDOM = secrets.SystemRandom()
+
+
+def _ensure_seed_allowed(current_user: dict) -> None:
+    if os.environ.get("ALLOW_SEED", "").strip().lower() != "true":
+        raise HTTPException(status_code=403, detail="Seed endpoint is disabled")
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
 
 
 def _get_demo_credentials() -> dict:
@@ -511,7 +518,8 @@ SECTOR_MAPS = [
 
 
 @router.post("/seed")
-async def seed_data():
+async def seed_data(current_user: dict = Depends(get_current_user)):
+    _ensure_seed_allowed(current_user)
     demo_credentials = _get_demo_credentials()
     driver_email_map = {
         "driver-001": demo_credentials["driver_1"]["email"],
@@ -552,10 +560,5 @@ async def seed_data():
 
     return {
         "message": "Demo data seeded successfully - 100 orders created",
-        "credentials": {
-            "admin": demo_credentials["admin"],
-            "drivers": {"email": demo_credentials["driver_1"]["email"], "password": demo_credentials["driver_1"]["password"]},
-            "restaurants": {"email": demo_credentials["restaurant_1"]["email"], "password": demo_credentials["restaurant_1"]["password"]}
-        },
         "data": {"orders": 100 + demo_routes, "drivers": 5, "restaurants": 5, "demo_routes": demo_routes}
     }

@@ -1,0 +1,17 @@
+ifrim-architect	0	C:\Users\mihai\OneDrive\Desktop\Ifrim Digital Proiecte\ProDelivery\.ifrim\AGENT_REPORTS\2026-06-10-125357-openclaw-ifrim-architect.md
+ifrim-product	0	C:\Users\mihai\OneDrive\Desktop\Ifrim Digital Proiecte\ProDelivery\.ifrim\AGENT_REPORTS\2026-06-10-125357-openclaw-ifrim-product.md
+ifrim-migration	0	C:\Users\mihai\OneDrive\Desktop\Ifrim Digital Proiecte\ProDelivery\.ifrim\AGENT_REPORTS\2026-06-10-125357-openclaw-ifrim-migration.md
+ifrim-frontend	0	C:\Users\mihai\OneDrive\Desktop\Ifrim Digital Proiecte\ProDelivery\.ifrim\AGENT_REPORTS\2026-06-10-125357-openclaw-ifrim-frontend.md
+ifrim-backend	0	C:\Users\mihai\OneDrive\Desktop\Ifrim Digital Proiecte\ProDelivery\.ifrim\AGENT_REPORTS\2026-06-10-125357-openclaw-ifrim-backend.md
+ifrim-qa	0	C:\Users\mihai\OneDrive\Desktop\Ifrim Digital Proiecte\ProDelivery\.ifrim\AGENT_REPORTS\2026-06-10-125357-openclaw-ifrim-qa.md
+ifrim-design	0	C:\Users\mihai\OneDrive\Desktop\Ifrim Digital Proiecte\ProDelivery\.ifrim\AGENT_REPORTS\2026-06-10-125357-openclaw-ifrim-design.md
+ifrim-integrations	0	C:\Users\mihai\OneDrive\Desktop\Ifrim Digital Proiecte\ProDelivery\.ifrim\AGENT_REPORTS\2026-06-10-125357-openclaw-ifrim-integrations.md
+ifrim-devops	0	C:\Users\mihai\OneDrive\Desktop\Ifrim Digital Proiecte\ProDelivery\.ifrim\AGENT_REPORTS\2026-06-10-125357-openclaw-ifrim-devops.md
+ifrim-mobile	0	C:\Users\mihai\OneDrive\Desktop\Ifrim Digital Proiecte\ProDelivery\.ifrim\AGENT_REPORTS\2026-06-10-125357-openclaw-ifrim-mobile.md
+ifrim-prototype	0	C:\Users\mihai\OneDrive\Desktop\Ifrim Digital Proiecte\ProDelivery\.ifrim\AGENT_REPORTS\2026-06-10-125357-openclaw-ifrim-prototype.md
+ifrim-reviewer	1	C:\Users\mihai\OneDrive\Desktop\Ifrim Digital Proiecte\ProDelivery\.ifrim\AGENT_REPORTS\2026-06-10-125357-openclaw-ifrim-reviewer.md
+ifrim-backend-reviewer	0	C:\Users\mihai\OneDrive\Desktop\Ifrim Digital Proiecte\ProDelivery\.ifrim\AGENT_REPORTS\2026-06-10-125357-openclaw-ifrim-backend-reviewer.md
+ifrim-frontend-reviewer	1	C:\Users\mihai\OneDrive\Desktop\Ifrim Digital Proiecte\ProDelivery\.ifrim\AGENT_REPORTS\2026-06-10-125357-openclaw-ifrim-frontend-reviewer.md
+ifrim-security-reviewer	1	C:\Users\mihai\OneDrive\Desktop\Ifrim Digital Proiecte\ProDelivery\.ifrim\AGENT_REPORTS\2026-06-10-125357-openclaw-ifrim-security-reviewer.md
+ifrim-devops-reviewer	1	C:\Users\mihai\OneDrive\Desktop\Ifrim Digital Proiecte\ProDelivery\.ifrim\AGENT_REPORTS\2026-06-10-125357-openclaw-ifrim-devops-reviewer.md
+ifrim-quality-reviewer	1	C:\Users\mihai\OneDrive\Desktop\Ifrim Digital Proiecte\ProDelivery\.ifrim\AGENT_REPORTS\2026-06-10-125357-openclaw-ifrim-quality-reviewer.md

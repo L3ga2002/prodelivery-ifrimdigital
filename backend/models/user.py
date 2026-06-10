@@ -17,7 +17,7 @@ class UserCreate(BaseModel):
     email: str
     password: str
     name: str
-    role: str
+    role: str = "driver"
     phone: Optional[str] = None
     restaurant_id: Optional[str] = None
 
