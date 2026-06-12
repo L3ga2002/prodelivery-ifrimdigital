@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
-from datetime import datetime, timedelta, timezone
+from pydantic import BaseModel, ConfigDict, Field
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 import uuid
 import secrets
 from shapely.geometry import Point, Polygon
@@ -9,15 +10,28 @@ from auth import hash_password, get_current_user
 from models.restaurant import RestaurantCreate, RestaurantAvailabilityRequest, RestaurantScheduleSettingsUpdate
 
 router = APIRouter(prefix="/restaurants", tags=["restaurants"])
+RESTAURANT_TIMEZONE = ZoneInfo("Europe/Bucharest")
 
 
 def _generate_initial_password() -> str:
     return secrets.token_urlsafe(12)
 
 
+def _next_restaurant_local_midnight_utc(now: datetime | None = None) -> datetime:
+    current_utc = now or datetime.now(timezone.utc)
+    if current_utc.tzinfo is None:
+        current_utc = current_utc.replace(tzinfo=timezone.utc)
+    local_now = current_utc.astimezone(RESTAURANT_TIMEZONE)
+    next_local_date = local_now.date() + timedelta(days=1)
+    local_midnight = datetime.combine(next_local_date, time.min, tzinfo=RESTAURANT_TIMEZONE)
+    return local_midnight.astimezone(timezone.utc)
+
+
 class RestaurantStatusUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     accepting_orders: bool
-    pause_minutes: int | None = None
+    pause_minutes: int | None = Field(default=None, ge=1, le=720)
     closed_today: bool | None = None
 
 
@@ -249,9 +263,8 @@ async def update_restaurant_status(restaurant_id: str, data: RestaurantStatusUpd
         "closed_today": False,
     }
     if not data.accepting_orders and data.closed_today:
-        tomorrow = now + timedelta(days=1)
         update["closed_today"] = True
-        update["pause_until"] = tomorrow.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        update["pause_until"] = _next_restaurant_local_midnight_utc(now).isoformat()
     elif not data.accepting_orders and data.pause_minutes:
         minutes = max(1, min(int(data.pause_minutes), 720))
         update["pause_until"] = (now + timedelta(minutes=minutes)).isoformat()

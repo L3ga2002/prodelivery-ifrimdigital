@@ -7,7 +7,7 @@ from fastapi import HTTPException, UploadFile
 from PIL import Image, UnidentifiedImageError
 
 
-AVATAR_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+AVATAR_MAX_UPLOAD_BYTES = 4 * 1024 * 1024
 AVATAR_SIZE = 640
 AVATAR_DIR = Path(__file__).resolve().parents[1] / "uploads" / "driver_avatars"
 ALLOWED_AVATAR_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
@@ -24,7 +24,7 @@ async def process_driver_avatar(file: UploadFile) -> dict:
 
     raw = await file.read()
     if len(raw) > AVATAR_MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="Poza depășește limita de 10 MB")
+        raise HTTPException(status_code=413, detail="Poza depășește limita de 4 MB")
 
     try:
         with Image.open(BytesIO(raw)) as image:

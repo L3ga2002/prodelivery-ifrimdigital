@@ -1,24 +1,10 @@
 import { createContext, useContext, useState, useEffect, useMemo, useCallback } from "react";
 import axios from "axios";
+import { getApiErrorMessage } from "../lib/api";
 
 const AuthContext = createContext(null);
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
-axios.defaults.withCredentials = true;
-
-
-const formatApiErrorDetail = (detail) => {
-  if (detail == null) return "Something went wrong. Please try again.";
-  if (typeof detail === "string") return detail;
-  if (Array.isArray(detail)) {
-    return detail
-      .map((entry) => (entry && typeof entry.msg === "string" ? entry.msg : JSON.stringify(entry)))
-      .filter(Boolean)
-      .join(" ");
-  }
-  if (detail && typeof detail.msg === "string") return detail.msg;
-  return String(detail);
-};
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -117,7 +103,7 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       return {
         success: false,
-        error: formatApiErrorDetail(error.response?.data?.detail) || error.message,
+        error: getApiErrorMessage(error, "Nu te-am putut conecta. Verifică datele și încearcă din nou."),
       };
     }
   }, [applyAuthState]);

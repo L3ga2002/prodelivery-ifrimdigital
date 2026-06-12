@@ -61,6 +61,8 @@ import { DriverAvatar } from "../components/DriverAvatar";
 import { restaurantIcon } from "../components/admin/MapMarkerIcons";
 import { LocationAutocomplete } from "../components/LocationAutocomplete";
 import { useTheme } from "../context/ThemeContext";
+import { getApiErrorMessage, normalizeArray, normalizeObject, retryApiCall } from "../lib/api";
+import { useNetworkStatus } from "../hooks/useNetworkStatus";
 import {
   BarChart,
   Bar,
@@ -210,11 +212,13 @@ const RestaurantLocationPreview = ({ restaurant, onLocationChange }) => {
 const AdminDashboard = () => {
   const { user, logout } = useAuth();
   const { isDark, toggleTheme } = useTheme();
+  const { isOnline } = useNetworkStatus();
   const [orders, setOrders] = useState([]);
   const [drivers, setDrivers] = useState([]);
   const [restaurants, setRestaurants] = useState([]);
   const [stats, setStats] = useState({});
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshingData, setIsRefreshingData] = useState(false);
 
   // Dialogs
   const [selectedOrder, setSelectedOrder] = useState(null);
@@ -230,6 +234,11 @@ const AdminDashboard = () => {
   const [driverVerificationFallback, setDriverVerificationFallback] = useState(null);
   const [isRestaurantPickerOpen, setIsRestaurantPickerOpen] = useState(false);
   const [activeAdminTab, setActiveAdminTab] = useState("orders");
+  const [isAssigning, setIsAssigning] = useState(false);
+  const [isCreatingOrder, setIsCreatingOrder] = useState(false);
+  const [isCreatingDriver, setIsCreatingDriver] = useState(false);
+  const [isCreatingRestaurant, setIsCreatingRestaurant] = useState(false);
+  const [isDetectingOrderZone, setIsDetectingOrderZone] = useState(false);
 
   // Hourly data for charts
   const [hourlyData, setHourlyData] = useState({ hourly_orders: [] });
@@ -242,6 +251,8 @@ const AdminDashboard = () => {
   const [simSteps, setSimSteps] = useState([]);
   const [isSimRunning, setIsSimRunning] = useState(false);
   const simAbort = useRef(false);
+  const fetchDataRequestRef = useRef(0);
+  const detectZoneRequestRef = useRef(0);
 
   const [selectedRestaurantId, setSelectedRestaurantId] = useState(null);
 
@@ -321,28 +332,37 @@ const AdminDashboard = () => {
     return () => clearInterval(moveInterval);
   }, [drivers]);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async ({ manual = false, silent = false } = {}) => {
+    const requestId = fetchDataRequestRef.current + 1;
+    fetchDataRequestRef.current = requestId;
+    if (manual) setIsRefreshingData(true);
     try {
-      const [ordersRes, driversRes, restaurantsRes, statsRes, hourlyRes, analyticsRes] = await Promise.all([
+      const [ordersRes, driversRes, restaurantsRes, statsRes, hourlyRes, analyticsRes] = await retryApiCall(() => Promise.all([
         axios.get(`${API_URL}/api/orders`),
         axios.get(`${API_URL}/api/drivers`),
         axios.get(`${API_URL}/api/restaurants`),
         axios.get(`${API_URL}/api/stats`),
         axios.get(`${API_URL}/api/stats/hourly`),
-        axios.get(`${API_URL}/api/stats/analytics`).catch(() => {
-          return { data: null };
-        }),
-      ]);
-      setOrders(ordersRes.data);
-      setDrivers(driversRes.data);
-      setRestaurants(restaurantsRes.data);
-      setStats(statsRes.data);
-      setHourlyData(hourlyRes.data);
-      if (analyticsRes.data) setAnalyticsData(analyticsRes.data);
-    } catch {
-      toast.error("Eroare la încărcarea datelor");
+        axios.get(`${API_URL}/api/stats/analytics`).catch(() => ({ data: null })),
+      ]));
+      if (requestId !== fetchDataRequestRef.current) return;
+      setOrders(normalizeArray(ordersRes.data));
+      setDrivers(normalizeArray(driversRes.data));
+      setRestaurants(normalizeArray(restaurantsRes.data));
+      setStats(normalizeObject(statsRes.data));
+      setHourlyData(normalizeObject(hourlyRes.data, { hourly_orders: [] }));
+      if (analyticsRes.data) setAnalyticsData(normalizeObject(analyticsRes.data, null));
+    } catch (error) {
+      if (requestId === fetchDataRequestRef.current) {
+        if (!silent) {
+          toast.error(getApiErrorMessage(error, "Eroare la încărcarea datelor"));
+        }
+      }
     } finally {
-      setIsLoading(false);
+      if (requestId === fetchDataRequestRef.current) {
+        setIsLoading(false);
+      }
+      if (manual) setIsRefreshingData(false);
     }
   }, []);
 
@@ -358,9 +378,9 @@ const AdminDashboard = () => {
     if (!effectiveRestaurantId) return;
     let cancelled = false;
     setRestaurantAnalyticsLoading(true);
-    axios.get(`${API_URL}/api/restaurants/${effectiveRestaurantId}/analytics`)
+    retryApiCall(() => axios.get(`${API_URL}/api/restaurants/${effectiveRestaurantId}/analytics`))
       .then((response) => {
-        if (!cancelled) setRestaurantAnalytics(response.data);
+        if (!cancelled) setRestaurantAnalytics(normalizeObject(response.data, null));
       })
       .catch(() => {
         if (!cancelled) {
@@ -403,6 +423,7 @@ const AdminDashboard = () => {
   }, [assignDriverSearch]);
 
   const confirmAssign = async () => {
+    if (isAssigning) return;
     if (!selectedOrder?.id) {
       toast.error("Selectează comanda pentru alocare");
       return;
@@ -411,18 +432,22 @@ const AdminDashboard = () => {
       toast.error("Selectează un livrator");
       return;
     }
+    setIsAssigning(true);
     try {
       await axios.put(`${API_URL}/api/orders/${selectedOrder.id}/assign`, { driver_id: selectedDriver });
       toast.success("Comandă alocată cu succes!");
       setIsAssignDialogOpen(false);
       setIsOrderSelectionLocked(false);
-      fetchData();
-    } catch {
-      toast.error("Eroare la alocare");
+      await fetchData({ silent: true });
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Eroare la alocare"));
+    } finally {
+      setIsAssigning(false);
     }
   };
 
   const createOrder = async () => {
+    if (isCreatingOrder) return;
     if (!newOrder.restaurant_id || !newOrder.customer_name || !newOrder.customer_phone || !newOrder.customer_latitude || !newOrder.customer_longitude) {
       toast.error("Completează câmpurile obligatorii");
       return;
@@ -431,6 +456,7 @@ const AdminDashboard = () => {
       toast.error("Selectează o locație validă dintr-o zonă de livrare");
       return;
     }
+    setIsCreatingOrder(true);
     try {
       await axios.post(`${API_URL}/api/orders`, newOrder);
       toast.success("Comandă creată!");
@@ -454,9 +480,11 @@ const AdminDashboard = () => {
         notes: "",
         source: "S"
       });
-      fetchData();
-    } catch {
-      toast.error("Eroare la creare comandă");
+      await fetchData({ silent: true });
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Eroare la creare comandă"));
+    } finally {
+      setIsCreatingOrder(false);
     }
   };
 
@@ -465,13 +493,17 @@ const AdminDashboard = () => {
       toast.error("Selectează restaurantul înainte de verificarea zonei");
       return;
     }
+    const requestId = detectZoneRequestRef.current + 1;
+    detectZoneRequestRef.current = requestId;
+    setIsDetectingOrderZone(true);
     try {
       const response = await axios.post(`${API_URL}/api/zones/detect`, {
         restaurant_id: newOrder.restaurant_id,
         lat,
         lng,
       });
-      const zone = response.data;
+      if (requestId !== detectZoneRequestRef.current) return;
+      const zone = normalizeObject(response.data);
       setNewOrder((prev) => {
         const deliveryFee = zone.fee || 0;
         const subtotal = Number(prev.subtotal_amount || 0);
@@ -490,8 +522,14 @@ const AdminDashboard = () => {
       } else {
         toast.error("Adresa este în afara zonelor acestui restaurant");
       }
-    } catch {
-      toast.error("Nu am putut detecta zona");
+    } catch (error) {
+      if (requestId === detectZoneRequestRef.current) {
+        toast.error(getApiErrorMessage(error, "Nu am putut detecta zona"));
+      }
+    } finally {
+      if (requestId === detectZoneRequestRef.current) {
+        setIsDetectingOrderZone(false);
+      }
     }
   }, [newOrder.restaurant_id, setNewOrder]);
 
@@ -499,6 +537,12 @@ const AdminDashboard = () => {
     setNewOrder((prev) => ({
       ...prev,
       ...location,
+      delivery_zone_id: null,
+      delivery_zone_name: "",
+      delivery_sector: "",
+      delivery_zone_level: null,
+      delivery_fee: 0,
+      total_amount: Number(prev.subtotal_amount || 0),
     }));
     if (location.customer_latitude && location.customer_longitude) {
       detectOrderZone(location.customer_latitude, location.customer_longitude);
@@ -506,10 +550,12 @@ const AdminDashboard = () => {
   }, [detectOrderZone]);
 
   const createDriver = async () => {
+    if (isCreatingDriver) return;
     if (!newDriver.name || !newDriver.phone || !newDriver.email) {
       toast.error("Completează toate câmpurile");
       return;
     }
+    setIsCreatingDriver(true);
     try {
       const res = await axios.post(`${API_URL}/api/drivers`, newDriver);
       if (res.data.email_delivery?.status === "sent") {
@@ -527,9 +573,11 @@ const AdminDashboard = () => {
       }
       setIsNewDriverDialogOpen(false);
       setNewDriver({ name: "", phone: "", email: "", vehicle_type: "scooter" });
-      fetchData();
-    } catch {
-      toast.error("Eroare la creare livrator");
+      await fetchData({ silent: true });
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Eroare la creare livrator"));
+    } finally {
+      setIsCreatingDriver(false);
     }
   };
 
@@ -538,10 +586,12 @@ const AdminDashboard = () => {
   };
 
   const createRestaurant = async () => {
+    if (isCreatingRestaurant) return;
     if (!newRestaurant.name || !newRestaurant.address || !newRestaurant.phone || !newRestaurant.latitude || !newRestaurant.longitude) {
       toast.error("Completează toate câmpurile");
       return;
     }
+    setIsCreatingRestaurant(true);
     try {
       const res = await axios.post(`${API_URL}/api/restaurants`, newRestaurant);
       toast.success(`Restaurant creat! Login: ${res.data.login_email} / ${res.data.password}`);
@@ -557,9 +607,11 @@ const AdminDashboard = () => {
         location_source: "manual",
       });
       setSelectedRestaurantId(res.data.restaurant_id);
-      fetchData();
-    } catch {
-      toast.error("Eroare la creare restaurant");
+      await fetchData({ silent: true });
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Eroare la creare restaurant"));
+    } finally {
+      setIsCreatingRestaurant(false);
     }
   };
 
@@ -618,7 +670,7 @@ const AdminDashboard = () => {
       const orderId = orderRes.data.id;
       updateStep(0, "done");
       if (simAbort.current) return;
-      fetchData();
+      void fetchData({ silent: true });
 
       // Step 2: Restaurant setează pregătire
       updateStep(1, "active");
@@ -626,7 +678,7 @@ const AdminDashboard = () => {
       await axios.put(`${API_URL}/api/orders/${orderId}/preparing`, { preparation_time: 10 });
       updateStep(1, "done");
       if (simAbort.current) return;
-      fetchData();
+      void fetchData({ silent: true });
 
       // Step 3: Restaurant marchează GATA
       updateStep(2, "active");
@@ -634,7 +686,7 @@ const AdminDashboard = () => {
       await axios.put(`${API_URL}/api/orders/${orderId}/ready`);
       updateStep(2, "done");
       if (simAbort.current) return;
-      fetchData();
+      void fetchData({ silent: true });
 
       // Step 4: Admin alocă livrator — apare la Driver
       updateStep(3, "active");
@@ -644,7 +696,7 @@ const AdminDashboard = () => {
       await axios.put(`${API_URL}/api/orders/${orderId}/assign`, { driver_id: driver.id });
       updateStep(3, "done");
       if (simAbort.current) return;
-      fetchData();
+      void fetchData({ silent: true });
 
       // Step 5: Livrator acceptă
       updateStep(4, "active");
@@ -652,7 +704,7 @@ const AdminDashboard = () => {
       await axios.put(`${API_URL}/api/orders/${orderId}/status`, { status: "ACCEPTED" });
       updateStep(4, "done");
       if (simAbort.current) return;
-      fetchData();
+      void fetchData({ silent: true });
 
       // Step 6: Livrator ridică
       updateStep(5, "active");
@@ -660,18 +712,18 @@ const AdminDashboard = () => {
       await axios.put(`${API_URL}/api/orders/${orderId}/status`, { status: "PICKED_UP" });
       updateStep(5, "done");
       if (simAbort.current) return;
-      fetchData();
+      void fetchData({ silent: true });
 
       // Step 7: Livrator livrează
       updateStep(6, "active");
       await wait(5000);
       await axios.put(`${API_URL}/api/orders/${orderId}/status`, { status: "DELIVERED" });
       updateStep(6, "done");
-      fetchData();
+      void fetchData({ silent: true });
 
       toast.success("Simulare completă! Comanda a parcurs tot fluxul.");
     } catch (err) {
-      toast.error("Eroare în simulare: " + (err.message || "necunoscută"));
+      toast.error("Eroare în simulare: " + getApiErrorMessage(err, err.message || "necunoscută"));
     } finally {
       setIsSimRunning(false);
     }
@@ -746,8 +798,14 @@ const AdminDashboard = () => {
               {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
               <span className="hidden sm:inline">{isDark ? "Light" : "Dark"}</span>
             </Button>
-            <Button variant="outline" size="sm" onClick={fetchData} data-testid="refresh-button">
-              <RefreshCw className="h-4 w-4 sm:mr-2" />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => fetchData({ manual: true })}
+              disabled={isRefreshingData || !isOnline}
+              data-testid="refresh-button"
+            >
+              <RefreshCw className={`h-4 w-4 sm:mr-2 ${isRefreshingData ? "animate-spin" : ""}`} />
               <span className="hidden sm:inline">Actualizează</span>
             </Button>
             <div className="text-sm text-right hidden sm:block">
@@ -767,6 +825,7 @@ const AdminDashboard = () => {
           activeDriversCount={activeDrivers.length}
           restaurantsCount={restaurants.length}
           isSimRunning={isSimRunning}
+          actionsDisabled={!isOnline || isCreatingOrder}
           onRunSimulation={runSimulation}
           onNewOrder={() => setIsNewOrderDialogOpen(true)}
         />
@@ -1124,8 +1183,10 @@ const AdminDashboard = () => {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsAssignDialogOpen(false)} data-testid="assign-cancel-button">Anulează</Button>
-            <Button onClick={confirmAssign} disabled={!selectedOrder?.id || !selectedDriver} data-testid="assign-confirm-button">Alocă</Button>
+            <Button variant="outline" onClick={() => setIsAssignDialogOpen(false)} disabled={isAssigning} data-testid="assign-cancel-button">Anulează</Button>
+            <Button onClick={confirmAssign} disabled={isAssigning || !selectedOrder?.id || !selectedDriver || !isOnline} data-testid="assign-confirm-button">
+              {isAssigning ? "Se alocă..." : "Alocă"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1277,8 +1338,10 @@ const AdminDashboard = () => {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsNewOrderDialogOpen(false)} data-testid="new-order-cancel-button">Anulează</Button>
-            <Button onClick={createOrder} data-testid="new-order-submit-button">Creează Comandă</Button>
+            <Button variant="outline" onClick={() => setIsNewOrderDialogOpen(false)} disabled={isCreatingOrder} data-testid="new-order-cancel-button">Anulează</Button>
+            <Button onClick={createOrder} disabled={isCreatingOrder || isDetectingOrderZone || !isOnline} data-testid="new-order-submit-button">
+              {isCreatingOrder ? "Se creează..." : isDetectingOrderZone ? "Verific zona..." : "Creează Comandă"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1322,8 +1385,10 @@ const AdminDashboard = () => {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsNewDriverDialogOpen(false)} data-testid="new-driver-cancel-button">Anulează</Button>
-            <Button onClick={createDriver} data-testid="new-driver-submit-button">Creează Livrator</Button>
+            <Button variant="outline" onClick={() => setIsNewDriverDialogOpen(false)} disabled={isCreatingDriver} data-testid="new-driver-cancel-button">Anulează</Button>
+            <Button onClick={createDriver} disabled={isCreatingDriver || !isOnline} data-testid="new-driver-submit-button">
+              {isCreatingDriver ? "Se creează..." : "Creează Livrator"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1500,8 +1565,10 @@ const AdminDashboard = () => {
             <p className="text-sm text-muted-foreground">Se va crea automat un cont pentru restaurant, iar parola inițială se generează automat și se afișează după creare.</p>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsNewRestaurantDialogOpen(false)} data-testid="new-restaurant-cancel-button">Anulează</Button>
-            <Button onClick={createRestaurant} data-testid="new-restaurant-submit-button">Creează Restaurant</Button>
+            <Button variant="outline" onClick={() => setIsNewRestaurantDialogOpen(false)} disabled={isCreatingRestaurant} data-testid="new-restaurant-cancel-button">Anulează</Button>
+            <Button onClick={createRestaurant} disabled={isCreatingRestaurant || !isOnline} data-testid="new-restaurant-submit-button">
+              {isCreatingRestaurant ? "Se creează..." : "Creează Restaurant"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

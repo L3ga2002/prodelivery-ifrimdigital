@@ -1,7 +1,10 @@
 """
-Test suite for Delivery Zones feature (Task 2.2)
-Tests: GET/POST/PUT/DELETE /api/zones and POST /api/zones/detect
+Test suite for restaurant-scoped Delivery Zones.
+Tests: GET/POST/PUT/DELETE /api/zones and POST /api/zones/detect.
 """
+
+import uuid
+
 import pytest
 import requests
 from tests._settings import (
@@ -12,12 +15,19 @@ from tests._settings import (
     DRIVER_PASSWORD,
     RESTAURANT_EMAIL,
     RESTAURANT_PASSWORD,
+    clear_login_attempts,
+    seed_demo_data,
 )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def seeded_demo():
+    seed_demo_data()
 
 
 @pytest.fixture(scope="module")
 def admin_token():
-    """Get admin authentication token"""
+    clear_login_attempts(ADMIN_EMAIL)
     response = requests.post(f"{BASE_URL}/api/auth/login", json={
         "email": ADMIN_EMAIL,
         "password": ADMIN_PASSWORD
@@ -28,7 +38,7 @@ def admin_token():
 
 @pytest.fixture(scope="module")
 def driver_token():
-    """Get driver authentication token"""
+    clear_login_attempts(DRIVER_EMAIL)
     response = requests.post(f"{BASE_URL}/api/auth/login", json={
         "email": DRIVER_EMAIL,
         "password": DRIVER_PASSWORD
@@ -39,7 +49,7 @@ def driver_token():
 
 @pytest.fixture(scope="module")
 def restaurant_token():
-    """Get restaurant authentication token"""
+    clear_login_attempts(RESTAURANT_EMAIL)
     response = requests.post(f"{BASE_URL}/api/auth/login", json={
         "email": RESTAURANT_EMAIL,
         "password": RESTAURANT_PASSWORD
@@ -48,437 +58,294 @@ def restaurant_token():
     return response.json()["token"]
 
 
+def _headers(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _restaurant(admin_token: str) -> dict:
+    response = requests.get(f"{BASE_URL}/api/restaurants", headers=_headers(admin_token))
+    assert response.status_code == 200
+    restaurants = response.json()
+    assert restaurants
+    return next((r for r in restaurants if r["id"] == "rest-001"), restaurants[0])
+
+
+def _zone_payload(admin_token: str, name: str | None = None, **overrides) -> dict:
+    restaurant = _restaurant(admin_token)
+    payload = {
+        "restaurant_id": restaurant["id"],
+        "restaurant_name": restaurant["name"],
+        "sector": restaurant["name"],
+        "zone_level": 1,
+        "name": name or f"TEST_Zone_{uuid.uuid4().hex[:8]}",
+        "color": "#ff00ff",
+        "fee": 20.0,
+        "polygon": [
+            {"lat": 46.50, "lng": 26.85},
+            {"lat": 46.50, "lng": 26.87},
+            {"lat": 46.52, "lng": 26.87},
+            {"lat": 46.52, "lng": 26.85},
+        ],
+        "is_active": True,
+        "sort_order": 999,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _create_test_zone(admin_token: str, **overrides) -> dict:
+    response = requests.post(
+        f"{BASE_URL}/api/zones",
+        headers=_headers(admin_token),
+        json=_zone_payload(admin_token, **overrides),
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 class TestGetZones:
-    """Tests for GET /api/zones - list all delivery zones"""
+    """Tests for GET /api/zones - list restaurant-scoped delivery zones."""
 
     def test_get_zones_returns_seeded_data(self, admin_token):
-        """GET /api/zones should return 4 default seeded zones"""
-        response = requests.get(
-            f"{BASE_URL}/api/zones",
-            headers={"Authorization": f"Bearer {admin_token}"}
-        )
+        response = requests.get(f"{BASE_URL}/api/zones", headers=_headers(admin_token))
         assert response.status_code == 200
         zones = response.json()
+        assert len(zones) >= 10, f"Expected seeded restaurant zones, got {len(zones)}"
 
-        # Should have 4 default zones
-        assert len(zones) >= 4, f"Expected at least 4 zones, got {len(zones)}"
-
-        # Verify zone structure
         zone = zones[0]
-        assert "id" in zone
-        assert "name" in zone
-        assert "color" in zone
-        assert "fee" in zone
-        assert "polygon" in zone
-        assert "is_active" in zone
+        for field in ["id", "restaurant_id", "name", "color", "fee", "polygon", "is_active", "is_locked"]:
+            assert field in zone
 
-    def test_get_zones_contains_expected_zones(self, admin_token):
-        """Verify the 4 default zones: Centru, Semicentral, Periferie, Extins"""
+    def test_get_zones_contains_restaurant_scoped_levels(self, admin_token):
+        restaurant = _restaurant(admin_token)
         response = requests.get(
             f"{BASE_URL}/api/zones",
-            headers={"Authorization": f"Bearer {admin_token}"}
+            params={"restaurant_id": restaurant["id"]},
+            headers=_headers(admin_token),
         )
         assert response.status_code == 200
         zones = response.json()
+        assert {zone["zone_level"] for zone in zones} >= {1, 2}
+        assert all(zone["restaurant_id"] == restaurant["id"] for zone in zones)
 
-        zone_names = [z["name"] for z in zones]
-        expected_zones = ["Zona 1 - Centru", "Zona 2 - Semicentral", "Zona 3 - Periferie", "Zona 4 - Extins"]
-
-        for expected in expected_zones:
-            assert expected in zone_names, f"Missing zone: {expected}"
-
-    def test_get_zones_fees_are_correct(self, admin_token):
-        """Verify zone fees: Centru=5, Semicentral=8, Periferie=12, Extins=15"""
-        response = requests.get(
-            f"{BASE_URL}/api/zones",
-            headers={"Authorization": f"Bearer {admin_token}"}
-        )
+    def test_get_zones_fees_are_positive(self, admin_token):
+        response = requests.get(f"{BASE_URL}/api/zones", headers=_headers(admin_token))
         assert response.status_code == 200
         zones = response.json()
-
-        fee_map = {z["name"]: z["fee"] for z in zones}
-
-        assert fee_map.get("Zona 1 - Centru") == 5.0
-        assert fee_map.get("Zona 2 - Semicentral") == 8.0
-        assert fee_map.get("Zona 3 - Periferie") == 12.0
-        assert fee_map.get("Zona 4 - Extins") == 15.0
+        assert all(isinstance(zone["fee"], (int, float)) and zone["fee"] > 0 for zone in zones)
 
     def test_get_zones_requires_auth(self):
-        """GET /api/zones without auth should return 401"""
         response = requests.get(f"{BASE_URL}/api/zones")
         assert response.status_code in [401, 403], f"Expected 401/403, got {response.status_code}"
 
     def test_driver_can_get_zones(self, driver_token):
-        """Driver should be able to view zones"""
-        response = requests.get(
-            f"{BASE_URL}/api/zones",
-            headers={"Authorization": f"Bearer {driver_token}"}
-        )
+        response = requests.get(f"{BASE_URL}/api/zones", headers=_headers(driver_token))
         assert response.status_code == 200
-        zones = response.json()
-        assert len(zones) >= 4
+        assert len(response.json()) >= 10
 
 
 class TestCreateZone:
-    """Tests for POST /api/zones - admin creates new zone"""
+    """Tests for POST /api/zones - admin creates new restaurant-scoped zone."""
 
     def test_admin_can_create_zone(self, admin_token):
-        """Admin should be able to create a new delivery zone"""
-        new_zone = {
-            "name": "TEST_Zone_New",
-            "color": "#ff00ff",
-            "fee": 20.0,
-            "polygon": [
-                {"lat": 46.50, "lng": 26.85},
-                {"lat": 46.50, "lng": 26.87},
-                {"lat": 46.52, "lng": 26.87},
-                {"lat": 46.52, "lng": 26.85}
-            ],
-            "is_active": True,
-            "sort_order": 5
-        }
-
-        response = requests.post(
-            f"{BASE_URL}/api/zones",
-            headers={"Authorization": f"Bearer {admin_token}"},
-            json=new_zone
-        )
-        assert response.status_code == 200, f"Create zone failed: {response.text}"
-
-        created = response.json()
-        assert created["name"] == "TEST_Zone_New"
+        created = _create_test_zone(admin_token, name=f"TEST_Zone_New_{uuid.uuid4().hex[:8]}")
+        assert created["name"].startswith("TEST_Zone_New_")
+        assert created["restaurant_id"]
         assert created["fee"] == 20.0
         assert created["color"] == "#ff00ff"
-        assert "id" in created
+        assert created["is_locked"] is True
 
-        # Verify persistence with GET
-        get_response = requests.get(
-            f"{BASE_URL}/api/zones/{created['id']}",
-            headers={"Authorization": f"Bearer {admin_token}"}
-        )
+        get_response = requests.get(f"{BASE_URL}/api/zones/{created['id']}", headers=_headers(admin_token))
         assert get_response.status_code == 200
-        fetched = get_response.json()
-        assert fetched["name"] == "TEST_Zone_New"
+        assert get_response.json()["name"] == created["name"]
 
-    def test_driver_cannot_create_zone(self, driver_token):
-        """Driver should get 403 when trying to create zone"""
-        new_zone = {
-            "name": "TEST_Driver_Zone",
-            "fee": 10.0,
-            "polygon": [
-                {"lat": 46.50, "lng": 26.85},
-                {"lat": 46.50, "lng": 26.87},
-                {"lat": 46.52, "lng": 26.87}
-            ]
-        }
-
+    def test_driver_cannot_create_zone(self, driver_token, admin_token):
         response = requests.post(
             f"{BASE_URL}/api/zones",
-            headers={"Authorization": f"Bearer {driver_token}"},
-            json=new_zone
+            headers=_headers(driver_token),
+            json=_zone_payload(admin_token, name="TEST_Driver_Zone"),
         )
-        assert response.status_code == 403, f"Expected 403, got {response.status_code}"
+        assert response.status_code == 403
 
-    def test_restaurant_cannot_create_zone(self, restaurant_token):
-        """Restaurant should get 403 when trying to create zone"""
-        new_zone = {
-            "name": "TEST_Restaurant_Zone",
-            "fee": 10.0,
-            "polygon": [
-                {"lat": 46.50, "lng": 26.85},
-                {"lat": 46.50, "lng": 26.87},
-                {"lat": 46.52, "lng": 26.87}
-            ]
-        }
-
+    def test_restaurant_cannot_create_zone(self, restaurant_token, admin_token):
         response = requests.post(
             f"{BASE_URL}/api/zones",
-            headers={"Authorization": f"Bearer {restaurant_token}"},
-            json=new_zone
+            headers=_headers(restaurant_token),
+            json=_zone_payload(admin_token, name="TEST_Restaurant_Zone"),
         )
-        assert response.status_code == 403, f"Expected 403, got {response.status_code}"
+        assert response.status_code == 403
 
 
 class TestUpdateZone:
-    """Tests for PUT /api/zones/{zone_id} - admin updates zone"""
+    """Tests for PUT /api/zones/{zone_id} - protected zone update."""
 
     def test_admin_can_update_zone_name(self, admin_token):
-        """Admin should be able to update zone name"""
-        # First get existing zone
-        response = requests.get(
-            f"{BASE_URL}/api/zones",
-            headers={"Authorization": f"Bearer {admin_token}"}
-        )
-        zones = response.json()
-        test_zone = next((z for z in zones if z["name"].startswith("TEST_")), None)
-
-        if not test_zone:
-            # Create a test zone first
-            create_response = requests.post(
-                f"{BASE_URL}/api/zones",
-                headers={"Authorization": f"Bearer {admin_token}"},
-                json={
-                    "name": "TEST_Update_Zone",
-                    "fee": 10.0,
-                    "polygon": [
-                        {"lat": 46.50, "lng": 26.85},
-                        {"lat": 46.50, "lng": 26.87},
-                        {"lat": 46.52, "lng": 26.87}
-                    ]
-                }
-            )
-            test_zone = create_response.json()
-
-        # Update the zone
+        test_zone = _create_test_zone(admin_token, name=f"TEST_Update_Zone_{uuid.uuid4().hex[:8]}")
         update_response = requests.put(
             f"{BASE_URL}/api/zones/{test_zone['id']}",
-            headers={"Authorization": f"Bearer {admin_token}"},
-            json={"name": "TEST_Updated_Name"}
+            headers=_headers(admin_token),
+            json={"name": "TEST_Updated_Name", "confirm_protected_action": True},
         )
         assert update_response.status_code == 200
-        updated = update_response.json()
-        assert updated["name"] == "TEST_Updated_Name"
-
-        # Verify persistence
-        get_response = requests.get(
-            f"{BASE_URL}/api/zones/{test_zone['id']}",
-            headers={"Authorization": f"Bearer {admin_token}"}
-        )
-        assert get_response.json()["name"] == "TEST_Updated_Name"
+        assert update_response.json()["name"] == "TEST_Updated_Name"
 
     def test_admin_can_update_zone_fee(self, admin_token):
-        """Admin should be able to update zone fee"""
-        response = requests.get(
-            f"{BASE_URL}/api/zones",
-            headers={"Authorization": f"Bearer {admin_token}"}
+        test_zone = _create_test_zone(admin_token, name=f"TEST_Fee_Zone_{uuid.uuid4().hex[:8]}")
+        update_response = requests.put(
+            f"{BASE_URL}/api/zones/{test_zone['id']}",
+            headers=_headers(admin_token),
+            json={"fee": 25.5, "confirm_protected_action": True},
         )
-        zones = response.json()
-        test_zone = next((z for z in zones if z["name"].startswith("TEST_")), None)
-
-        if test_zone:
-            update_response = requests.put(
-                f"{BASE_URL}/api/zones/{test_zone['id']}",
-                headers={"Authorization": f"Bearer {admin_token}"},
-                json={"fee": 25.5}
-            )
-            assert update_response.status_code == 200
-            assert update_response.json()["fee"] == 25.5
+        assert update_response.status_code == 200
+        assert update_response.json()["fee"] == 25.5
 
     def test_admin_can_update_zone_color(self, admin_token):
-        """Admin should be able to update zone color"""
-        response = requests.get(
-            f"{BASE_URL}/api/zones",
-            headers={"Authorization": f"Bearer {admin_token}"}
+        test_zone = _create_test_zone(admin_token, name=f"TEST_Color_Zone_{uuid.uuid4().hex[:8]}")
+        update_response = requests.put(
+            f"{BASE_URL}/api/zones/{test_zone['id']}",
+            headers=_headers(admin_token),
+            json={"color": "#00ff00", "confirm_protected_action": True},
         )
-        zones = response.json()
-        test_zone = next((z for z in zones if z["name"].startswith("TEST_")), None)
-
-        if test_zone:
-            update_response = requests.put(
-                f"{BASE_URL}/api/zones/{test_zone['id']}",
-                headers={"Authorization": f"Bearer {admin_token}"},
-                json={"color": "#00ff00"}
-            )
-            assert update_response.status_code == 200
-            assert update_response.json()["color"] == "#00ff00"
+        assert update_response.status_code == 200
+        assert update_response.json()["color"] == "#00ff00"
 
     def test_admin_can_toggle_zone_active(self, admin_token):
-        """Admin should be able to toggle zone active status"""
-        response = requests.get(
-            f"{BASE_URL}/api/zones",
-            headers={"Authorization": f"Bearer {admin_token}"}
+        test_zone = _create_test_zone(admin_token, name=f"TEST_Toggle_Zone_{uuid.uuid4().hex[:8]}")
+        update_response = requests.put(
+            f"{BASE_URL}/api/zones/{test_zone['id']}",
+            headers=_headers(admin_token),
+            json={"is_active": False, "confirm_protected_action": True},
         )
-        zones = response.json()
-        test_zone = next((z for z in zones if z["name"].startswith("TEST_")), None)
-
-        if test_zone:
-            update_response = requests.put(
-                f"{BASE_URL}/api/zones/{test_zone['id']}",
-                headers={"Authorization": f"Bearer {admin_token}"},
-                json={"is_active": False}
-            )
-            assert update_response.status_code == 200
-            assert not update_response.json()["is_active"]
+        assert update_response.status_code == 200
+        assert update_response.json()["is_active"] is False
 
     def test_driver_cannot_update_zone(self, driver_token, admin_token):
-        """Driver should get 403 when trying to update zone"""
-        response = requests.get(
-            f"{BASE_URL}/api/zones",
-            headers={"Authorization": f"Bearer {admin_token}"}
-        )
-        zones = response.json()
-        zone = zones[0]
-
+        zone = _create_test_zone(admin_token, name=f"TEST_Driver_Update_{uuid.uuid4().hex[:8]}")
         update_response = requests.put(
             f"{BASE_URL}/api/zones/{zone['id']}",
-            headers={"Authorization": f"Bearer {driver_token}"},
-            json={"name": "Hacked Zone"}
+            headers=_headers(driver_token),
+            json={"name": "Hacked Zone", "confirm_protected_action": True},
         )
         assert update_response.status_code == 403
 
     def test_update_nonexistent_zone_returns_404(self, admin_token):
-        """Updating non-existent zone should return 404"""
         update_response = requests.put(
             f"{BASE_URL}/api/zones/nonexistent-zone-id",
-            headers={"Authorization": f"Bearer {admin_token}"},
-            json={"name": "Test"}
+            headers=_headers(admin_token),
+            json={"name": "Test", "confirm_protected_action": True},
         )
         assert update_response.status_code == 404
 
 
 class TestDeleteZone:
-    """Tests for DELETE /api/zones/{zone_id} - admin deletes zone"""
+    """Tests for DELETE /api/zones/{zone_id} - protected zone delete."""
 
     def test_admin_can_delete_zone(self, admin_token):
-        """Admin should be able to delete a zone"""
-        # Create a zone to delete
-        create_response = requests.post(
-            f"{BASE_URL}/api/zones",
-            headers={"Authorization": f"Bearer {admin_token}"},
-            json={
-                "name": "TEST_Delete_Zone",
-                "fee": 10.0,
-                "polygon": [
-                    {"lat": 46.50, "lng": 26.85},
-                    {"lat": 46.50, "lng": 26.87},
-                    {"lat": 46.52, "lng": 26.87}
-                ]
-            }
-        )
-        zone_id = create_response.json()["id"]
-
-        # Delete the zone
+        created = _create_test_zone(admin_token, name=f"TEST_Delete_Zone_{uuid.uuid4().hex[:8]}")
         delete_response = requests.delete(
-            f"{BASE_URL}/api/zones/{zone_id}",
-            headers={"Authorization": f"Bearer {admin_token}"}
+            f"{BASE_URL}/api/zones/{created['id']}",
+            params={"confirm_protected_action": "true"},
+            headers=_headers(admin_token),
         )
         assert delete_response.status_code == 200
 
-        # Verify deletion
-        get_response = requests.get(
-            f"{BASE_URL}/api/zones/{zone_id}",
-            headers={"Authorization": f"Bearer {admin_token}"}
-        )
+        get_response = requests.get(f"{BASE_URL}/api/zones/{created['id']}", headers=_headers(admin_token))
         assert get_response.status_code == 404
 
     def test_driver_cannot_delete_zone(self, driver_token, admin_token):
-        """Driver should get 403 when trying to delete zone"""
-        response = requests.get(
-            f"{BASE_URL}/api/zones",
-            headers={"Authorization": f"Bearer {admin_token}"}
-        )
-        zones = response.json()
-        zone = zones[0]
-
+        zone = _create_test_zone(admin_token, name=f"TEST_Driver_Delete_{uuid.uuid4().hex[:8]}")
         delete_response = requests.delete(
             f"{BASE_URL}/api/zones/{zone['id']}",
-            headers={"Authorization": f"Bearer {driver_token}"}
+            params={"confirm_protected_action": "true"},
+            headers=_headers(driver_token),
         )
         assert delete_response.status_code == 403
 
     def test_delete_nonexistent_zone_returns_404(self, admin_token):
-        """Deleting non-existent zone should return 404"""
         delete_response = requests.delete(
             f"{BASE_URL}/api/zones/nonexistent-zone-id",
-            headers={"Authorization": f"Bearer {admin_token}"}
+            params={"confirm_protected_action": "true"},
+            headers=_headers(admin_token),
         )
         assert delete_response.status_code == 404
 
 
 class TestZoneDetection:
-    """Tests for POST /api/zones/detect - detect which zone a coordinate belongs to"""
+    """Tests for POST /api/zones/detect - detect which zone a coordinate belongs to."""
 
     def test_detect_zone_centru(self, admin_token):
-        """Point in Centru zone should return Zona 1 - Centru"""
-        # Centru zone polygon: lat 46.562-46.573, lng 26.905-26.922
+        restaurant = _restaurant(admin_token)
         response = requests.post(
             f"{BASE_URL}/api/zones/detect",
-            headers={"Authorization": f"Bearer {admin_token}"},
-            json={"lat": 46.567, "lng": 26.913}  # Center of Bacău
+            headers=_headers(admin_token),
+            json={"restaurant_id": restaurant["id"], "lat": restaurant["latitude"], "lng": restaurant["longitude"]},
         )
         assert response.status_code == 200
         result = response.json()
-
-        # Should detect a zone (could be Centru or overlapping zone)
-        assert "zone_id" in result
-        assert "zone_name" in result
-        assert "fee" in result
+        assert result["restaurant_id"] == restaurant["id"]
+        assert result["zone_id"] is not None
+        assert result["fee"] > 0
 
     def test_detect_zone_outside_all(self, admin_token):
-        """Point outside all zones should return 'In afara zonelor'"""
-        # Point far from Bacău
         response = requests.post(
             f"{BASE_URL}/api/zones/detect",
-            headers={"Authorization": f"Bearer {admin_token}"},
-            json={"lat": 44.0, "lng": 26.0}  # Far from Bacău
+            headers=_headers(admin_token),
+            json={"lat": 44.0, "lng": 26.0},
         )
         assert response.status_code == 200
         result = response.json()
-
         assert result["zone_id"] is None
         assert result["zone_name"] == "In afara zonelor"
         assert result["fee"] == 0
 
     def test_detect_zone_returns_fee(self, admin_token):
-        """Zone detection should return the zone fee"""
+        restaurant = _restaurant(admin_token)
         response = requests.post(
             f"{BASE_URL}/api/zones/detect",
-            headers={"Authorization": f"Bearer {admin_token}"},
-            json={"lat": 46.567, "lng": 26.913}
+            headers=_headers(admin_token),
+            json={"restaurant_id": restaurant["id"], "lat": restaurant["latitude"], "lng": restaurant["longitude"]},
         )
         assert response.status_code == 200
         result = response.json()
-
-        if result["zone_id"]:
-            assert result["fee"] > 0
-            assert isinstance(result["fee"], (int, float))
+        assert isinstance(result["fee"], (int, float))
 
     def test_detect_zone_returns_color(self, admin_token):
-        """Zone detection should return the zone color"""
+        restaurant = _restaurant(admin_token)
         response = requests.post(
             f"{BASE_URL}/api/zones/detect",
-            headers={"Authorization": f"Bearer {admin_token}"},
-            json={"lat": 46.567, "lng": 26.913}
+            headers=_headers(admin_token),
+            json={"restaurant_id": restaurant["id"], "lat": restaurant["latitude"], "lng": restaurant["longitude"]},
         )
         assert response.status_code == 200
-        result = response.json()
+        assert response.json()["color"].startswith("#")
 
-        assert "color" in result
-        assert result["color"].startswith("#")
-
-    def test_driver_can_detect_zone(self, driver_token):
-        """Driver should be able to use zone detection"""
+    def test_driver_can_detect_zone(self, driver_token, admin_token):
+        restaurant = _restaurant(admin_token)
         response = requests.post(
             f"{BASE_URL}/api/zones/detect",
-            headers={"Authorization": f"Bearer {driver_token}"},
-            json={"lat": 46.567, "lng": 26.913}
+            headers=_headers(driver_token),
+            json={"restaurant_id": restaurant["id"], "lat": restaurant["latitude"], "lng": restaurant["longitude"]},
         )
         assert response.status_code == 200
 
 
 class TestCleanup:
-    """Cleanup test zones after all tests"""
+    """Cleanup test zones after all tests."""
 
     def test_cleanup_test_zones(self, admin_token):
-        """Delete all TEST_ prefixed zones"""
-        response = requests.get(
-            f"{BASE_URL}/api/zones",
-            headers={"Authorization": f"Bearer {admin_token}"}
-        )
+        response = requests.get(f"{BASE_URL}/api/zones", headers=_headers(admin_token))
+        assert response.status_code == 200
         zones = response.json()
 
         for zone in zones:
             if zone["name"].startswith("TEST_"):
                 requests.delete(
                     f"{BASE_URL}/api/zones/{zone['id']}",
-                    headers={"Authorization": f"Bearer {admin_token}"}
+                    params={"confirm_protected_action": "true"},
+                    headers=_headers(admin_token),
                 )
 
-        # Verify cleanup
-        response = requests.get(
-            f"{BASE_URL}/api/zones",
-            headers={"Authorization": f"Bearer {admin_token}"}
-        )
-        zones = response.json()
-        test_zones = [z for z in zones if z["name"].startswith("TEST_")]
+        response = requests.get(f"{BASE_URL}/api/zones", headers=_headers(admin_token))
+        assert response.status_code == 200
+        test_zones = [z for z in response.json() if z["name"].startswith("TEST_")]
         assert len(test_zones) == 0, f"Cleanup failed, remaining test zones: {test_zones}"

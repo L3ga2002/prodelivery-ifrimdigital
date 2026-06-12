@@ -8,7 +8,7 @@ import pytest
 import requests
 from pymongo import MongoClient
 
-from _settings import BASE_URL, admin_credentials, driver_credentials
+from _settings import BASE_URL, CORS_ORIGIN, admin_credentials, clear_login_attempts, driver_credentials
 
 
 def _current_monday_iso() -> str:
@@ -30,15 +30,7 @@ def _login(session: requests.Session, creds: dict[str, str]) -> requests.Respons
 
 def _clear_login_attempts(email: str) -> None:
     # Auth module: keep tests isolated by removing previous lockout records for target user.
-    mongo_url = os.environ.get("MONGO_URL")
-    db_name = os.environ.get("DB_NAME")
-    if not mongo_url or not db_name:
-        return
-    client = MongoClient(mongo_url)
-    try:
-        client[db_name]["login_attempts"].delete_many({"email": email})
-    finally:
-        client.close()
+    clear_login_attempts(email)
 
 
 def _total_standard_slots(summary_payload: list, week_start: str) -> int:
@@ -101,13 +93,13 @@ def test_auth_cors_preflight_allows_explicit_origin_with_credentials():
     response = requests.options(
         f"{BASE_URL}/api/auth/login",
         headers={
-            "Origin": BASE_URL,
+            "Origin": CORS_ORIGIN,
             "Access-Control-Request-Method": "POST",
         },
         timeout=20,
     )
     assert response.status_code in (200, 204)
-    assert response.headers.get("access-control-allow-origin") == BASE_URL
+    assert response.headers.get("access-control-allow-origin") == CORS_ORIGIN
     assert response.headers.get("access-control-allow-credentials") == "true"
 
 
@@ -355,7 +347,10 @@ def test_driver_delete_is_blocked_when_driver_has_active_orders(admin_session: r
 
     drivers_response = admin_session.get(f"{BASE_URL}/api/drivers", timeout=20)
     assert drivers_response.status_code == 200
-    target_driver = next((driver for driver in drivers_response.json() if driver.get("is_active")), None)
+    target_driver = next(
+        (driver for driver in drivers_response.json() if driver.get("is_active") and not driver.get("current_order_id")),
+        None,
+    )
     assert target_driver is not None
 
     assign_response = admin_session.put(

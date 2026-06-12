@@ -12,9 +12,11 @@ export function LocationAutocomplete({ value, onChange, onSelect, placeholder = 
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const timeoutRef = useRef(null);
+  const abortRef = useRef(null);
 
   useEffect(() => {
     window.clearTimeout(timeoutRef.current);
+    abortRef.current?.abort();
     if (!value || value.trim().length < 2) {
       setSuggestions([]);
       setOpen(false);
@@ -22,22 +24,33 @@ export function LocationAutocomplete({ value, onChange, onSelect, placeholder = 
     }
 
     timeoutRef.current = window.setTimeout(async () => {
+      const controller = new AbortController();
+      abortRef.current = controller;
       setIsLoading(true);
       try {
         const response = await axios.get(`${API_URL}/api/geocoding/search`, {
           params: { q: value.trim(), limit: 6 },
+          signal: controller.signal,
         });
         setSuggestions(response.data.suggestions || []);
         setOpen(true);
         setActiveIndex(-1);
-      } catch {
-        setSuggestions([]);
+      } catch (error) {
+        if (!axios.isCancel(error)) {
+          setSuggestions([]);
+        }
       } finally {
-        setIsLoading(false);
+        if (abortRef.current === controller) {
+          setIsLoading(false);
+          abortRef.current = null;
+        }
       }
     }, 350);
 
-    return () => window.clearTimeout(timeoutRef.current);
+    return () => {
+      window.clearTimeout(timeoutRef.current);
+      abortRef.current?.abort();
+    };
   }, [value]);
 
   const selectSuggestion = (suggestion) => {

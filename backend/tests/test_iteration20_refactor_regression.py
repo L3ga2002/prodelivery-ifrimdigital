@@ -5,7 +5,7 @@ from datetime import date, timedelta
 import pytest
 import requests
 
-from _settings import BASE_URL, admin_credentials
+from _settings import BASE_URL, admin_credentials, login_session
 
 
 def _current_monday_iso() -> str:
@@ -17,21 +17,8 @@ def _current_monday_iso() -> str:
 @pytest.fixture(scope="module")
 def admin_session() -> requests.Session:
     """Auth module: create authenticated admin session for protected endpoints."""
-    session = requests.Session()
-    session.headers.update({"Content-Type": "application/json"})
-
-    response = session.post(
-        f"{BASE_URL}/api/auth/login",
-        json=admin_credentials(),
-        timeout=20,
-    )
-    assert response.status_code == 200
-    payload = response.json()
-    token = payload.get("token")
-    assert isinstance(token, str) and len(token) > 0
+    session, payload = login_session(admin_credentials(), timeout=20)
     assert payload.get("user", {}).get("role") == "admin"
-
-    session.headers.update({"Authorization": f"Bearer {token}"})
     return session
 
 
@@ -40,13 +27,14 @@ def test_seed_endpoint_creates_100_orders(admin_session: requests.Session):
     seed_response = admin_session.post(f"{BASE_URL}/api/seed", timeout=30)
     assert seed_response.status_code == 200
     seed_data = seed_response.json()
-    assert seed_data.get("data", {}).get("orders") == 100
+    assert seed_data.get("data", {}).get("orders") >= 100
+    assert seed_data.get("data", {}).get("demo_routes") == 3
 
     orders_response = admin_session.get(f"{BASE_URL}/api/orders", timeout=20)
     assert orders_response.status_code == 200
     orders = orders_response.json()
     assert isinstance(orders, list)
-    assert len(orders) == 100
+    assert len(orders) >= 100
 
 
 def test_restaurant_analytics_payload_shape(admin_session: requests.Session):
@@ -132,7 +120,7 @@ def test_zones_update_payload_still_updates_zone(admin_session: requests.Session
 
     update_response = admin_session.put(
         f"{BASE_URL}/api/zones/{zone_id}",
-        json={"name": updated_name, "fee": updated_fee},
+        json={"name": updated_name, "fee": updated_fee, "confirm_protected_action": True},
         timeout=20,
     )
     assert update_response.status_code == 200
@@ -143,7 +131,7 @@ def test_zones_update_payload_still_updates_zone(admin_session: requests.Session
 
     restore_response = admin_session.put(
         f"{BASE_URL}/api/zones/{zone_id}",
-        json={"name": original_name, "fee": original_fee},
+        json={"name": original_name, "fee": original_fee, "confirm_protected_action": True},
         timeout=20,
     )
     assert restore_response.status_code == 200

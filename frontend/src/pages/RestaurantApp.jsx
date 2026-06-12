@@ -41,6 +41,8 @@ import {
   BookOpen,
   SlidersHorizontal,
 } from "lucide-react";
+import { getApiErrorMessage, normalizeArray, normalizeObject, retryApiCall } from "../lib/api";
+import { useNetworkStatus } from "../hooks/useNetworkStatus";
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 const ORDER_POLL_INTERVAL_MS = 5000;
@@ -166,8 +168,10 @@ const orderLaneMeta = {
 const RestaurantApp = () => {
   const { user, logout } = useAuth();
   const restaurantId = user?.restaurant_id;
+  const { isOnline } = useNetworkStatus();
   const [orders, setOrders] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
   const [newOrderFlash, setNewOrderFlash] = useState(false);
   const [confirmReadyOrder, setConfirmReadyOrder] = useState(null);
   const [cancelOrder, setCancelOrder] = useState(null);
@@ -188,24 +192,31 @@ const RestaurantApp = () => {
   const [prepAvailability, setPrepAvailability] = useState({ available_drivers: 0, blocked_short_options: false, minimum_preparation_minutes: 5 });
   const [analytics, setAnalytics] = useState(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [isUpdatingRestaurantStatus, setIsUpdatingRestaurantStatus] = useState(false);
+  const [pendingOrderAction, setPendingOrderAction] = useState(null);
+  const [isSavingSchedule, setIsSavingSchedule] = useState(false);
+  const [isCreatingProblem, setIsCreatingProblem] = useState(false);
+  const [isCancellingOrder, setIsCancellingOrder] = useState(false);
+  const fetchOrdersRequestRef = useRef(0);
 
   const fetchRestaurantStatus = useCallback(async () => {
     if (!restaurantId) return;
     try {
-      const response = await axios.get(`${API_URL}/api/restaurants/${restaurantId}`);
-      setRestaurantPauseUntil(response.data.pause_until || null);
-      setAcceptingOrders(response.data.accepting_orders !== false);
-      setScheduleForm({ ...defaultScheduleSettings(), ...(response.data.schedule_settings || {}) });
-    } catch {
-      toast.error("Nu am putut încărca statusul restaurantului");
+      const response = await retryApiCall(() => axios.get(`${API_URL}/api/restaurants/${restaurantId}`));
+      const restaurant = normalizeObject(response.data);
+      setRestaurantPauseUntil(restaurant.pause_until || null);
+      setAcceptingOrders(restaurant.accepting_orders !== false);
+      setScheduleForm({ ...defaultScheduleSettings(), ...(restaurant.schedule_settings || {}) });
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Nu am putut încărca statusul restaurantului"));
     }
   }, [restaurantId]);
 
   const fetchPrepAvailability = useCallback(async () => {
     if (!restaurantId) return;
     try {
-      const response = await axios.get(`${API_URL}/api/orders/restaurant/${restaurantId}/prep-availability`);
-      setPrepAvailability(response.data);
+      const response = await retryApiCall(() => axios.get(`${API_URL}/api/orders/restaurant/${restaurantId}/prep-availability`));
+      setPrepAvailability(normalizeObject(response.data, { available_drivers: 0, blocked_short_options: false, minimum_preparation_minutes: 5 }));
     } catch {
       // Availability warning is non-blocking for the restaurant screen.
     }
@@ -215,24 +226,35 @@ const RestaurantApp = () => {
     if (!restaurantId) return;
     setAnalyticsLoading(true);
     try {
-      const response = await axios.get(`${API_URL}/api/restaurants/${restaurantId}/analytics`);
-      setAnalytics(response.data);
-    } catch {
-      toast.error("Nu am putut încărca analytics-ul restaurantului");
+      const response = await retryApiCall(() => axios.get(`${API_URL}/api/restaurants/${restaurantId}/analytics`));
+      setAnalytics(normalizeObject(response.data, null));
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Nu am putut încărca analytics-ul restaurantului"));
     } finally {
       setAnalyticsLoading(false);
     }
   }, [restaurantId]);
 
-  const fetchOrders = useCallback(async () => {
+  const fetchOrders = useCallback(async ({ manual = false, silent = false } = {}) => {
     if (!restaurantId) return;
+    const requestId = fetchOrdersRequestRef.current + 1;
+    fetchOrdersRequestRef.current = requestId;
+    if (manual) setIsRefreshingOrders(true);
     try {
-      const response = await axios.get(`${API_URL}/api/orders/restaurant/${restaurantId}`);
-      setOrders(response.data);
-    } catch {
-      toast.error("Nu am putut încărca comenzile restaurantului");
+      const response = await retryApiCall(() => axios.get(`${API_URL}/api/orders/restaurant/${restaurantId}`));
+      if (requestId !== fetchOrdersRequestRef.current) return;
+      setOrders(normalizeArray(response.data));
+    } catch (error) {
+      if (requestId === fetchOrdersRequestRef.current) {
+        if (!silent) {
+          toast.error(getApiErrorMessage(error, "Nu am putut încărca comenzile restaurantului"));
+        }
+      }
     } finally {
-      setIsLoading(false);
+      if (requestId === fetchOrdersRequestRef.current) {
+        setIsLoading(false);
+      }
+      if (manual) setIsRefreshingOrders(false);
     }
   }, [restaurantId]);
 
@@ -249,7 +271,12 @@ const RestaurantApp = () => {
   }, [fetchOrders, fetchPrepAvailability, fetchRestaurantStatus, restaurantId]);
 
   const setRestaurantStatus = async ({ accepting, pauseMinutes = null, closedToday = false }) => {
-    if (!restaurantId) return;
+    if (!restaurantId || isUpdatingRestaurantStatus) return;
+    if (!isOnline) {
+      toast.error("Nu ai conexiune la internet. Încearcă după reconectare.");
+      return;
+    }
+    setIsUpdatingRestaurantStatus(true);
     try {
       const response = await axios.patch(`${API_URL}/api/restaurants/${restaurantId}/status`, {
         accepting_orders: accepting,
@@ -259,8 +286,11 @@ const RestaurantApp = () => {
       setAcceptingOrders(accepting);
       setRestaurantPauseUntil(response.data.pause_until || null);
       toast.success(accepting ? "Restaurant online pentru comenzi" : closedToday ? "Restaurant închis pentru azi" : `Restaurant pus pe pauză ${pauseMinutes} min`);
+      await fetchOrders({ silent: true });
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Nu am putut schimba statusul restaurantului");
+      toast.error(getApiErrorMessage(error, "Nu am putut schimba statusul restaurantului"));
+    } finally {
+      setIsUpdatingRestaurantStatus(false);
     }
   };
 
@@ -329,37 +359,60 @@ const RestaurantApp = () => {
   }, [lateAlertedOrders, now, orders]);
 
   const setPreparationTime = useCallback(async (orderId, minutes) => {
+    const actionKey = `prepare:${orderId}`;
+    if (pendingOrderAction) return;
+    if (!isOnline) {
+      toast.error("Nu ai conexiune la internet. Încearcă după reconectare.");
+      return;
+    }
     if (prepAvailability.blocked_short_options && minutes < prepAvailability.minimum_preparation_minutes) {
       toast.error(`Nu există livratori disponibili. Alege minimum ${prepAvailability.minimum_preparation_minutes} minute.`);
       return;
     }
+    setPendingOrderAction(actionKey);
     try {
       await axios.put(`${API_URL}/api/orders/${orderId}/preparing`, {
         preparation_time: minutes
       });
       toast.success(`Timp pregătire setat: ${minutes} minute`);
-      fetchOrders();
-    } catch {
-      toast.error("Eroare la setare timp");
+      await fetchOrders({ silent: true });
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Eroare la setare timp"));
+    } finally {
+      setPendingOrderAction(null);
     }
-  }, [fetchOrders, prepAvailability.blocked_short_options, prepAvailability.minimum_preparation_minutes]);
+  }, [fetchOrders, isOnline, pendingOrderAction, prepAvailability.blocked_short_options, prepAvailability.minimum_preparation_minutes]);
 
   const saveScheduleSettings = async () => {
+    if (isSavingSchedule || !restaurantId) return;
+    if (!isOnline) {
+      toast.error("Nu ai conexiune la internet. Încearcă după reconectare.");
+      return;
+    }
+    setIsSavingSchedule(true);
     try {
       await axios.patch(`${API_URL}/api/restaurants/${restaurantId}/schedule-settings`, scheduleForm);
       toast.success("Programul de lucru a fost salvat");
       setScheduleDialogOpen(false);
-      fetchRestaurantStatus();
+      await fetchRestaurantStatus();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Nu am putut salva programul");
+      toast.error(getApiErrorMessage(error, "Nu am putut salva programul"));
+    } finally {
+      setIsSavingSchedule(false);
     }
   };
 
   const createProblemOrder = async () => {
+    if (isCreatingProblem) return;
+    if (!isOnline) {
+      toast.error("Nu ai conexiune la internet. Încearcă după reconectare.");
+      return;
+    }
     if (!problemOrder || !problemForm.problem_description.trim()) {
       toast.error("Descrie problema înainte de salvare");
       return;
     }
+    setIsCreatingProblem(true);
     try {
       await axios.post(`${API_URL}/api/orders/${problemOrder.id}/problem`, {
         ...problemForm,
@@ -369,28 +422,49 @@ const RestaurantApp = () => {
       toast.success("Comandă legată creată pentru problemă");
       setProblemOrder(null);
       setProblemForm({ problem_type: "missing_product", item_name: "", quantity: 1, price: 0, problem_description: "" });
-      fetchOrders();
+      await fetchOrders({ silent: true });
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Nu am putut crea comanda legată");
+      toast.error(getApiErrorMessage(error, "Nu am putut crea comanda legată"));
+    } finally {
+      setIsCreatingProblem(false);
     }
   };
 
   const markAsReady = useCallback(async (orderId) => {
+    const actionKey = `ready:${orderId}`;
+    if (!orderId || pendingOrderAction) return;
+    if (!isOnline) {
+      toast.error("Nu ai conexiune la internet. Încearcă după reconectare.");
+      return;
+    }
+    setPendingOrderAction(actionKey);
     try {
       await axios.put(`${API_URL}/api/orders/${orderId}/ready`);
       toast.success("Comanda este GATA pentru ridicare!");
       setConfirmReadyOrder(null);
-      fetchOrders();
-    } catch {
-      toast.error("Eroare la marcare gata");
+      await fetchOrders({ silent: true });
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Eroare la marcare gata"));
+    } finally {
+      setPendingOrderAction(null);
     }
-  }, [fetchOrders]);
+  }, [fetchOrders, isOnline, pendingOrderAction]);
 
   const handleCancelOrder = useCallback(async () => {
+    if (isCancellingOrder) return;
+    if (!isOnline) {
+      toast.error("Nu ai conexiune la internet. Încearcă după reconectare.");
+      return;
+    }
+    if (!cancelOrder?.id) {
+      toast.error("Comanda nu mai este disponibilă pentru anulare.");
+      return;
+    }
     if (!cancelReason.trim()) {
       toast.error("Motivul anulării este obligatoriu!");
       return;
     }
+    setIsCancellingOrder(true);
     try {
       await axios.put(`${API_URL}/api/orders/${cancelOrder.id}/status`, {
         status: "CANCELLED",
@@ -399,11 +473,13 @@ const RestaurantApp = () => {
       toast.success("Comanda a fost anulată");
       setCancelOrder(null);
       setCancelReason("");
-      fetchOrders();
-    } catch {
-      toast.error("Eroare la anulare");
+      await fetchOrders({ silent: true });
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Eroare la anulare"));
+    } finally {
+      setIsCancellingOrder(false);
     }
-  }, [cancelOrder?.id, cancelReason, fetchOrders]);
+  }, [cancelOrder?.id, cancelReason, fetchOrders, isCancellingOrder, isOnline]);
 
   const orderGroups = useMemo(() => splitRestaurantOrders(orders), [orders]);
   const visibleOrders = useMemo(() => {
@@ -467,14 +543,22 @@ const RestaurantApp = () => {
             <button
               type="button"
               onClick={toggleRestaurantStatus}
+              disabled={isUpdatingRestaurantStatus || !isOnline}
               className={`inline-flex h-10 items-center gap-2 rounded-full border px-3 text-sm font-black transition-colors ${acceptingOrders ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300" : "border-red-500/40 bg-red-500/15 text-red-300"}`}
               data-testid="restaurant-operational-toggle"
             >
               <Power className="h-4 w-4" />
               <span className="hidden sm:inline">{acceptingOrders ? "Acceptă comenzi" : "Pauză"}</span>
             </button>
-            <Button variant="ghost" size="icon" onClick={fetchOrders} className="text-zinc-300 hover:bg-zinc-800 hover:text-white" data-testid="refresh-button">
-              <RefreshCw className="h-5 w-5" />
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => fetchOrders({ manual: true })}
+              disabled={isRefreshingOrders || !isOnline}
+              className="text-zinc-300 hover:bg-zinc-800 hover:text-white"
+              data-testid="refresh-button"
+            >
+              <RefreshCw className={`h-5 w-5 ${isRefreshingOrders ? "animate-spin" : ""}`} />
             </Button>
             <Button variant="ghost" size="icon" onClick={logout} className="text-zinc-300 hover:bg-zinc-800 hover:text-white" data-testid="logout-button">
               <LogOut className="h-5 w-5" />
@@ -524,10 +608,10 @@ const RestaurantApp = () => {
             {!acceptingOrders && pauseSeconds > 0 && <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 font-mono text-amber-200" data-testid="restaurant-compact-pause-countdown">{formatSeconds(pauseSeconds)}</span>}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" className="bg-emerald-600 hover:bg-emerald-500" onClick={() => setRestaurantStatus({ accepting: true })} data-testid="restaurant-compact-online-button">Online</Button>
+            <Button size="sm" className="bg-emerald-600 hover:bg-emerald-500" onClick={() => setRestaurantStatus({ accepting: true })} disabled={isUpdatingRestaurantStatus} data-testid="restaurant-compact-online-button">Online</Button>
             <Input type="number" min="1" max="720" value={manualPauseMinutes} onChange={(event) => setManualPauseMinutes(Number(event.target.value) || 30)} className="h-9 w-24 border-zinc-700 bg-zinc-950 text-zinc-50" data-testid="restaurant-compact-manual-pause-input" />
-            <Button size="sm" className="bg-orange-500 font-black text-zinc-950 hover:bg-orange-400" onClick={() => setRestaurantStatus({ accepting: false, pauseMinutes: manualPauseMinutes })} data-testid="restaurant-compact-manual-pause-button">Setează min</Button>
-            <Button size="sm" variant="outline" className="border-red-500/40 bg-red-500/10 text-red-200 hover:bg-red-500/20" onClick={() => setRestaurantStatus({ accepting: false, closedToday: true })} data-testid="restaurant-compact-close-today-button">Închide azi</Button>
+            <Button size="sm" className="bg-orange-500 font-black text-zinc-950 hover:bg-orange-400" onClick={() => setRestaurantStatus({ accepting: false, pauseMinutes: manualPauseMinutes })} disabled={isUpdatingRestaurantStatus} data-testid="restaurant-compact-manual-pause-button">Setează min</Button>
+            <Button size="sm" variant="outline" className="border-red-500/40 bg-red-500/10 text-red-200 hover:bg-red-500/20" onClick={() => setRestaurantStatus({ accepting: false, closedToday: true })} disabled={isUpdatingRestaurantStatus} data-testid="restaurant-compact-close-today-button">Închide azi</Button>
           </div>
         </section>
 
@@ -609,7 +693,7 @@ const RestaurantApp = () => {
                         <p className="text-xs font-black uppercase tracking-[0.15em] text-zinc-500">Setează timp</p>
                         <div className="grid grid-cols-3 gap-2">
                           {PREPARATION_OPTIONS_MINUTES.map((minutes) => (
-                            <Button key={minutes} variant="outline" disabled={prepAvailability.blocked_short_options && minutes < prepAvailability.minimum_preparation_minutes} onClick={() => setPreparationTime(order.id, minutes)} className="h-11 border-zinc-700 bg-zinc-800 text-zinc-100 hover:bg-orange-500 hover:text-zinc-950 disabled:opacity-40" data-testid={`prep-${minutes}-${order.id}`}>{minutes}m</Button>
+                            <Button key={minutes} variant="outline" disabled={!isOnline || pendingOrderAction !== null || (prepAvailability.blocked_short_options && minutes < prepAvailability.minimum_preparation_minutes)} onClick={() => setPreparationTime(order.id, minutes)} className="h-11 border-zinc-700 bg-zinc-800 text-zinc-100 hover:bg-orange-500 hover:text-zinc-950 disabled:opacity-40" data-testid={`prep-${minutes}-${order.id}`}>{minutes}m</Button>
                           ))}
                         </div>
                       </div>
@@ -621,7 +705,7 @@ const RestaurantApp = () => {
                           <div><p className="text-xs font-black uppercase tracking-[0.15em] text-zinc-500">Timer</p><p className="text-sm text-zinc-400">Estimare {order.preparation_time || "-"} min</p></div>
                           <p className={`font-mono text-4xl font-black ${timer?.isLate ? "animate-pulse text-red-300" : "text-orange-300"}`} data-testid={`restaurant-timer-display-${order.id}`}>{timer?.label || "--:--"}</p>
                         </div>
-                        <Button className="mt-3 h-13 w-full bg-emerald-500 font-black text-emerald-950 hover:bg-emerald-400" onClick={() => setConfirmReadyOrder(order)} data-testid={`ready-${order.id}`}><CheckCircle2 className="mr-2 h-5 w-5" /> COMANDA GATA</Button>
+                        <Button className="mt-3 h-13 w-full bg-emerald-500 font-black text-emerald-950 hover:bg-emerald-400" onClick={() => setConfirmReadyOrder(order)} disabled={!isOnline || pendingOrderAction !== null} data-testid={`ready-${order.id}`}><CheckCircle2 className="mr-2 h-5 w-5" /> COMANDA GATA</Button>
                       </div>
                     )}
 
@@ -630,7 +714,7 @@ const RestaurantApp = () => {
                     {['ASSIGNED', 'ACCEPTED'].includes(order.status) && <div className="rounded-xl border border-sky-500/40 bg-sky-500/10 p-4 text-center text-sky-200"><Truck className="mx-auto mb-1 h-8 w-8" /><p className="font-black">LIVRATORUL VINE</p><p className="text-sm opacity-80">{order.driver_name} preia comanda</p></div>}
 
                     {order.status === 'DELIVERED' && <Button variant="outline" className="h-11 w-full border-amber-500/30 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20" onClick={() => { setProblemOrder(order); setProblemForm({ problem_type: "missing_product", item_name: "", quantity: 1, price: 0, problem_description: "" }); }} data-testid={`problem-${order.id}`}><PlusCircle className="mr-2 h-4 w-4" /> Problemă comandă</Button>}
-                    {['NEW', 'PREPARING', 'READY'].includes(order.status) && <Button variant="outline" className="h-11 w-full border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20" onClick={() => { setCancelOrder(order); setCancelReason(""); }} data-testid={`cancel-${order.id}`}><XCircle className="mr-2 h-4 w-4" /> Anulează</Button>}
+                    {['NEW', 'PREPARING', 'READY'].includes(order.status) && <Button variant="outline" className="h-11 w-full border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20" onClick={() => { setCancelOrder(order); setCancelReason(""); }} disabled={!isOnline || pendingOrderAction !== null || isCancellingOrder} data-testid={`cancel-${order.id}`}><XCircle className="mr-2 h-4 w-4" /> Anulează</Button>}
                   </div>
                 </article>
               );
@@ -664,10 +748,11 @@ const RestaurantApp = () => {
             <Button
               className="bg-green-600 hover:bg-green-700"
               onClick={() => markAsReady(confirmReadyOrder?.id)}
+              disabled={!isOnline || pendingOrderAction !== null}
               data-testid="confirm-ready-btn"
             >
               <CheckCircle2 className="w-4 h-4 mr-2" />
-              Da, Comanda e Gata
+              {pendingOrderAction !== null ? "Se procesează..." : "Da, Comanda e Gata"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -682,7 +767,7 @@ const RestaurantApp = () => {
               return <div key={day.key} className="grid items-center gap-2 rounded-lg border p-3 sm:grid-cols-[110px_1fr_1fr_1fr]" data-testid={`restaurant-schedule-day-${day.key}`}><Label className="font-black">{day.label}</Label><Button type="button" variant={value.enabled ? "default" : "outline"} onClick={() => setScheduleForm((prev) => ({ ...prev, [day.key]: { ...value, enabled: !value.enabled } }))} data-testid={`restaurant-schedule-enabled-${day.key}`}>{value.enabled ? "Deschis" : "Închis"}</Button><Input type="time" value={value.open_time} onChange={(event) => setScheduleForm((prev) => ({ ...prev, [day.key]: { ...value, open_time: event.target.value } }))} data-testid={`restaurant-schedule-open-${day.key}`} /><Input type="time" value={value.close_time} onChange={(event) => setScheduleForm((prev) => ({ ...prev, [day.key]: { ...value, close_time: event.target.value } }))} data-testid={`restaurant-schedule-close-${day.key}`} /></div>;
             })}
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setScheduleDialogOpen(false)} data-testid="restaurant-schedule-cancel-button">Anulează</Button><Button onClick={saveScheduleSettings} data-testid="restaurant-schedule-save-button">Salvează program</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setScheduleDialogOpen(false)} disabled={isSavingSchedule} data-testid="restaurant-schedule-cancel-button">Anulează</Button><Button onClick={saveScheduleSettings} disabled={isSavingSchedule || !isOnline} data-testid="restaurant-schedule-save-button">{isSavingSchedule ? "Se salvează..." : "Salvează program"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -693,7 +778,7 @@ const RestaurantApp = () => {
             <button type="button" onClick={() => openMoreView("history")} className="rounded-xl border border-zinc-800 bg-zinc-900 p-4 text-left hover:border-orange-500/40" data-testid="restaurant-more-history-button"><History className="mb-3 h-5 w-5 text-orange-400" /><p className="font-black">Istoric comenzi</p><p className="mt-1 text-sm text-zinc-400">Caută și deschide detalii complete.</p></button>
             <button type="button" onClick={() => openMoreView("analytics")} className="rounded-xl border border-zinc-800 bg-zinc-900 p-4 text-left hover:border-orange-500/40" data-testid="restaurant-more-analytics-button"><BarChart3 className="mb-3 h-5 w-5 text-orange-400" /><p className="font-black">Analytics</p><p className="mt-1 text-sm text-zinc-400">Grafice și timpi operaționali.</p></button>
             <button type="button" onClick={() => { setScheduleDialogOpen(true); setMoreDialogOpen(false); }} className="rounded-xl border border-zinc-800 bg-zinc-900 p-4 text-left hover:border-orange-500/40" data-testid="restaurant-more-schedule-button"><CalendarDays className="mb-3 h-5 w-5 text-orange-400" /><p className="font-black">Program lucru</p><p className="mt-1 text-sm text-zinc-400">Zile și ore de funcționare.</p></button>
-            <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4" data-testid="restaurant-more-pause-panel"><TimerReset className="mb-3 h-5 w-5 text-orange-400" /><p className="font-black">Pauză restaurant</p><div className="mt-3 flex items-center gap-2"><Input type="number" min="1" max="720" value={manualPauseMinutes} onChange={(event) => setManualPauseMinutes(Number(event.target.value) || 30)} className="border-zinc-700 bg-zinc-950 text-zinc-50" data-testid="restaurant-manual-pause-input" /><span className="text-sm text-zinc-400">min</span></div><div className="mt-3 flex flex-wrap gap-2"><Button size="sm" className="bg-emerald-600 hover:bg-emerald-500" onClick={() => setRestaurantStatus({ accepting: true })} data-testid="restaurant-resume-orders-button">Online</Button><Button size="sm" className="bg-orange-500 font-black text-zinc-950 hover:bg-orange-400" onClick={() => setRestaurantStatus({ accepting: false, pauseMinutes: manualPauseMinutes })} data-testid="restaurant-manual-pause-button">Setează pauză</Button><Button size="sm" variant="outline" className="border-red-500/40 bg-red-500/10 text-red-200 hover:bg-red-500/20" onClick={() => setRestaurantStatus({ accepting: false, closedToday: true })} data-testid="restaurant-close-today-button">Închide azi</Button></div></div>
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4" data-testid="restaurant-more-pause-panel"><TimerReset className="mb-3 h-5 w-5 text-orange-400" /><p className="font-black">Pauză restaurant</p><div className="mt-3 flex items-center gap-2"><Input type="number" min="1" max="720" value={manualPauseMinutes} onChange={(event) => setManualPauseMinutes(Number(event.target.value) || 30)} className="border-zinc-700 bg-zinc-950 text-zinc-50" data-testid="restaurant-manual-pause-input" /><span className="text-sm text-zinc-400">min</span></div><div className="mt-3 flex flex-wrap gap-2"><Button size="sm" className="bg-emerald-600 hover:bg-emerald-500" onClick={() => setRestaurantStatus({ accepting: true })} disabled={isUpdatingRestaurantStatus || !isOnline} data-testid="restaurant-resume-orders-button">Online</Button><Button size="sm" className="bg-orange-500 font-black text-zinc-950 hover:bg-orange-400" onClick={() => setRestaurantStatus({ accepting: false, pauseMinutes: manualPauseMinutes })} disabled={isUpdatingRestaurantStatus || !isOnline} data-testid="restaurant-manual-pause-button">Setează pauză</Button><Button size="sm" variant="outline" className="border-red-500/40 bg-red-500/10 text-red-200 hover:bg-red-500/20" onClick={() => setRestaurantStatus({ accepting: false, closedToday: true })} disabled={isUpdatingRestaurantStatus || !isOnline} data-testid="restaurant-close-today-button">Închide azi</Button></div></div>
             <div className="rounded-xl border border-dashed border-zinc-700 bg-zinc-900/60 p-4 sm:col-span-2" data-testid="restaurant-more-future-catalog"><BookOpen className="mb-3 h-5 w-5 text-zinc-500" /><p className="font-black text-zinc-300">Catalog produse / meniu</p><p className="mt-1 text-sm text-zinc-500">Pregătit pentru viitoarea aplicație de client: produse, categorii, meniu și disponibilitate.</p></div>
           </div>
         </DialogContent>
@@ -715,7 +800,7 @@ const RestaurantApp = () => {
             <div className="grid grid-cols-2 gap-3"><div><Label>Cantitate</Label><Input type="number" min="1" value={problemForm.quantity} onChange={(event) => setProblemForm((prev) => ({ ...prev, quantity: event.target.value }))} data-testid="problem-quantity-input" /></div><div><Label>Preț</Label><Input type="number" min="0" value={problemForm.price} onChange={(event) => setProblemForm((prev) => ({ ...prev, price: event.target.value }))} data-testid="problem-price-input" /></div></div>
             <div><Label>Descriere problemă</Label><Textarea value={problemForm.problem_description} onChange={(event) => setProblemForm((prev) => ({ ...prev, problem_description: event.target.value }))} placeholder="Ce trebuie să știe dispeceratul/livratorul?" data-testid="problem-description-input" /></div>
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setProblemOrder(null)} data-testid="problem-cancel-button">Anulează</Button><Button onClick={createProblemOrder} data-testid="problem-submit-button">Creează comandă legată</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setProblemOrder(null)} disabled={isCreatingProblem} data-testid="problem-cancel-button">Anulează</Button><Button onClick={createProblemOrder} disabled={isCreatingProblem || !isOnline} data-testid="problem-submit-button">{isCreatingProblem ? "Se creează..." : "Creează comandă legată"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -748,11 +833,11 @@ const RestaurantApp = () => {
             <Button
               variant="destructive"
               onClick={handleCancelOrder}
-              disabled={!cancelReason.trim()}
+              disabled={isCancellingOrder || !cancelReason.trim() || !isOnline}
               data-testid="confirm-cancel-btn"
             >
               <XCircle className="w-4 h-4 mr-2" />
-              Confirmă Anularea
+              {isCancellingOrder ? "Se anulează..." : "Confirmă Anularea"}
             </Button>
           </DialogFooter>
         </DialogContent>

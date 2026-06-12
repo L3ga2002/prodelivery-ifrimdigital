@@ -33,6 +33,7 @@ import {
   Layers,
   MousePointerClick,
 } from "lucide-react";
+import { getApiErrorMessage, normalizeArray, retryApiCall } from "../lib/api";
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 const FIXED_ZONE_FEES = { 1: 14, 2: 22, 3: 33 };
@@ -57,6 +58,8 @@ export function DeliveryZonesManager() {
   const [sectorFilter, setSectorFilter] = useState("all");
   const [redrawMode, setRedrawMode] = useState(false);
   const [editDialog, setEditDialog] = useState(false);
+  const [isSavingZone, setIsSavingZone] = useState(false);
+  const [deletingZoneId, setDeletingZoneId] = useState(null);
   const [editForm, setEditForm] = useState({
     sector: "Centru",
     zone_level: 1,
@@ -93,10 +96,10 @@ export function DeliveryZonesManager() {
 
   const fetchZones = useCallback(async () => {
     try {
-      const res = await axios.get(`${API_URL}/api/zones`);
-      setZones(res.data);
-    } catch {
-      toast.error("Eroare la încărcarea zonelor");
+      const res = await retryApiCall(() => axios.get(`${API_URL}/api/zones`));
+      setZones(normalizeArray(res.data));
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Eroare la încărcarea zonelor"));
     } finally {
       setIsLoading(false);
     }
@@ -137,11 +140,13 @@ export function DeliveryZonesManager() {
   };
 
   const handleSaveZone = async () => {
+    if (isSavingZone) return;
     if (!editForm.name.trim()) {
       toast.error("Numele zonei este obligatoriu");
       return;
     }
 
+    setIsSavingZone(true);
     try {
       if (selectedZone) {
         await axios.put(`${API_URL}/api/zones/${selectedZone.id}`, {
@@ -175,9 +180,11 @@ export function DeliveryZonesManager() {
       setNewPolygon(null);
       setSelectedZone(null);
       setRedrawMode(false);
-      fetchZones();
-    } catch {
-      toast.error("Eroare la salvarea zonei");
+      await fetchZones();
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Eroare la salvarea zonei"));
+    } finally {
+      setIsSavingZone(false);
     }
   };
 
@@ -196,13 +203,17 @@ export function DeliveryZonesManager() {
   };
 
   const handleDeleteZone = async (zoneId) => {
+    if (deletingZoneId) return;
+    setDeletingZoneId(zoneId);
     try {
       await axios.delete(`${API_URL}/api/zones/${zoneId}`);
       toast.success("Zona a fost ștearsă");
       if (selectedZone?.id === zoneId) setSelectedZone(null);
-      fetchZones();
-    } catch {
-      toast.error("Eroare la ștergerea zonei");
+      await fetchZones();
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Eroare la ștergerea zonei"));
+    } finally {
+      setDeletingZoneId(null);
     }
   };
 
@@ -452,6 +463,7 @@ export function DeliveryZonesManager() {
                                 variant="ghost"
                                 size="icon"
                                 className="h-7 w-7"
+                                disabled={isSavingZone || deletingZoneId !== null}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handleEditZone(zone);
@@ -464,6 +476,7 @@ export function DeliveryZonesManager() {
                                 variant="ghost"
                                 size="icon"
                                 className="h-7 w-7 text-red-500 hover:text-red-700"
+                                disabled={isSavingZone || deletingZoneId === zone.id}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handleDeleteZone(zone.id);
@@ -593,6 +606,7 @@ export function DeliveryZonesManager() {
           <DialogFooter>
             <Button
               variant="outline"
+              disabled={isSavingZone}
               onClick={() => {
                 setEditDialog(false);
                 setNewPolygon(null);
@@ -601,9 +615,9 @@ export function DeliveryZonesManager() {
             >
               Anulează
             </Button>
-            <Button onClick={handleSaveZone} data-testid="save-zone-btn">
+            <Button onClick={handleSaveZone} disabled={isSavingZone} data-testid="save-zone-btn">
               <Save className="w-4 h-4 mr-1" />
-              {selectedZone ? "Salvează" : "Creează Zona"}
+              {isSavingZone ? "Se salvează..." : selectedZone ? "Salvează" : "Creează Zona"}
             </Button>
           </DialogFooter>
         </DialogContent>

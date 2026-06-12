@@ -31,6 +31,7 @@ import {
   Trash2,
   Repeat,
 } from "lucide-react";
+import { getApiErrorMessage, normalizeArray, normalizeObject, retryApiCall } from "../lib/api";
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 
@@ -138,6 +139,8 @@ export const AdminScheduleView = () => {
   const [emergencyDialog, setEmergencyDialog] = useState(null); // {day, hour}
   const [emergencySpots, setEmergencySpots] = useState(1);
   const [autoGenerating, setAutoGenerating] = useState(false);
+  const [savingEmergencySlot, setSavingEmergencySlot] = useState(false);
+  const [deletingEmergencySlotId, setDeletingEmergencySlotId] = useState(null);
   const [setupDialogOpen, setSetupDialogOpen] = useState(false);
   const [calendarMode, setCalendarMode] = useState("normal");
   const [quickSlotDialog, setQuickSlotDialog] = useState(null);
@@ -155,14 +158,14 @@ export const AdminScheduleView = () => {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [summaryRes, emergencyRes] = await Promise.all([
+      const [summaryRes, emergencyRes] = await retryApiCall(() => Promise.all([
         axios.get(`${API_URL}/api/schedules/admin/summary?week_start=${toISODate(weekStart)}`),
         axios.get(`${API_URL}/api/schedules/emergency?week_start=${toISODate(weekStart)}`),
-      ]);
-      setSummary(summaryRes.data);
-      setEmergencySlots(emergencyRes.data);
-    } catch {
-      toast.error("Eroare la încărcarea datelor");
+      ]));
+      setSummary(normalizeArray(summaryRes.data));
+      setEmergencySlots(normalizeArray(emergencyRes.data));
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Eroare la încărcarea datelor"));
     } finally {
       setLoading(false);
     }
@@ -202,6 +205,7 @@ export const AdminScheduleView = () => {
   };
 
   const saveSchedule = async () => {
+    if (saving || !editDriver) return;
     setSaving(true);
     try {
       await axios.post(`${API_URL}/api/schedules`, {
@@ -212,9 +216,9 @@ export const AdminScheduleView = () => {
       });
       toast.success(`Program salvat pentru ${editDriver.driver_name}`);
       setEditDriver(null);
-      fetchData();
-    } catch {
-      toast.error("Eroare la salvare");
+      await fetchData();
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Eroare la salvare"));
     } finally {
       setSaving(false);
     }
@@ -232,6 +236,8 @@ export const AdminScheduleView = () => {
   };
 
   const saveEmergencySlot = async () => {
+    if (savingEmergencySlot || !emergencyDialog) return;
+    setSavingEmergencySlot(true);
     try {
       await axios.post(`${API_URL}/api/schedules/emergency`, {
         week_start: toISODate(weekStart),
@@ -241,33 +247,40 @@ export const AdminScheduleView = () => {
       });
       toast.success(`Slot urgență setat: ${emergencySpots} locuri`);
       setEmergencyDialog(null);
-      fetchData();
-    } catch {
-      toast.error("Eroare la creare slot urgență");
+      await fetchData();
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Eroare la creare slot urgență"));
+    } finally {
+      setSavingEmergencySlot(false);
     }
   };
 
   const deleteEmergencySlot = async (slotId) => {
+    if (deletingEmergencySlotId) return;
+    setDeletingEmergencySlotId(slotId);
     try {
       await axios.delete(`${API_URL}/api/schedules/emergency/${slotId}`);
       toast.success("Slot urgență șters");
       setEmergencyDialog(null);
-      fetchData();
-    } catch {
-      toast.error("Eroare la ștergere");
+      await fetchData();
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Eroare la ștergere"));
+    } finally {
+      setDeletingEmergencySlotId(null);
     }
   };
 
   const autoGenerateEmergencySlots = async () => {
+    if (autoGenerating) return;
     setAutoGenerating(true);
     try {
       const response = await axios.post(`${API_URL}/api/schedules/emergency/auto-generate`, null, {
         params: { week_start: toISODate(weekStart) },
       });
-      toast.success(response.data.message);
-      fetchData();
-    } catch {
-      toast.error("Eroare la generarea automată a sloturilor");
+      toast.success(normalizeObject(response.data).message || "Sloturi generate");
+      await fetchData();
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Eroare la generarea automată a sloturilor"));
     } finally {
       setAutoGenerating(false);
     }
@@ -283,6 +296,7 @@ export const AdminScheduleView = () => {
   };
 
   const submitSetupGeneration = async () => {
+    if (autoGenerating) return;
     if (setupForm.days.length === 0) {
       toast.error("Alege cel puțin o zi");
       return;
@@ -294,24 +308,25 @@ export const AdminScheduleView = () => {
           ...setupForm,
           week_start: toISODate(weekStart),
         });
-        toast.success(response.data.message);
+        toast.success(normalizeObject(response.data).message || "Sloturi generate");
       } else {
         const response = await axios.post(`${API_URL}/api/schedules/admin/auto-generate`, {
           ...setupForm,
           week_start: toISODate(weekStart),
         });
-        toast.success(response.data.message);
+        toast.success(normalizeObject(response.data).message || "Sloturi generate");
       }
       setSetupDialogOpen(false);
-      fetchData();
+      await fetchData();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Eroare la generarea sloturilor");
+      toast.error(getApiErrorMessage(error, "Eroare la generarea sloturilor"));
     } finally {
       setAutoGenerating(false);
     }
   };
 
   const deleteGeneratedSlots = async () => {
+    if (autoGenerating) return;
     setAutoGenerating(true);
     try {
       const payload = {
@@ -323,10 +338,10 @@ export const AdminScheduleView = () => {
       const response = setupForm.slot_type === "emergency"
         ? await axios.post(`${API_URL}/api/schedules/emergency/bulk-delete`, { ...payload, created_by: "system" })
         : await axios.post(`${API_URL}/api/schedules/admin/bulk-delete`, { ...payload, added_by: "auto" });
-      toast.success(response.data.message);
-      fetchData();
-    } catch {
-      toast.error("Eroare la ștergerea sloturilor automate");
+      toast.success(normalizeObject(response.data).message || "Sloturi șterse");
+      await fetchData();
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Eroare la ștergerea sloturilor automate"));
     } finally {
       setAutoGenerating(false);
     }
@@ -341,7 +356,7 @@ export const AdminScheduleView = () => {
   };
 
   const adjustQuickSlot = async (delta) => {
-    if (!quickSlotDialog) return;
+    if (!quickSlotDialog || autoGenerating) return;
     setAutoGenerating(true);
     try {
       const response = await axios.post(`${API_URL}/api/schedules/admin/quick-adjust`, {
@@ -352,47 +367,50 @@ export const AdminScheduleView = () => {
         slot_type: quickSlotDialog.mode,
       });
       const requested = Math.abs(delta);
-      const adjusted = Math.abs(response.data.adjusted || 0);
+      const responseData = normalizeObject(response.data);
+      const adjusted = Math.abs(responseData.adjusted || 0);
       if (quickSlotDialog.mode === "normal" && delta > 0 && adjusted < requested) {
         toast.warning(`Am adăugat ${adjusted} din ${requested}. Sloturile standard se pot lega doar de livratori existenți fără program pe ora aceea.`);
       } else {
-        toast.success(response.data.message || "Slot ajustat");
+        toast.success(responseData.message || "Slot ajustat");
       }
-      fetchData();
+      await fetchData();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Nu am putut ajusta slotul");
+      toast.error(getApiErrorMessage(error, "Nu am putut ajusta slotul"));
     } finally {
       setAutoGenerating(false);
     }
   };
 
   const openClonePreview = async () => {
+    if (autoGenerating) return;
     setAutoGenerating(true);
     try {
       const response = await axios.post(`${API_URL}/api/schedules/admin/clone-previous-week`, {
         week_start: toISODate(weekStart),
         preview_only: true,
       });
-      setClonePreview(response.data.preview);
+      setClonePreview(normalizeObject(response.data).preview || null);
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Nu am putut genera preview-ul");
+      toast.error(getApiErrorMessage(error, "Nu am putut genera preview-ul"));
     } finally {
       setAutoGenerating(false);
     }
   };
 
   const confirmClonePreviousWeek = async () => {
+    if (autoGenerating) return;
     setAutoGenerating(true);
     try {
       const response = await axios.post(`${API_URL}/api/schedules/admin/clone-previous-week`, {
         week_start: toISODate(weekStart),
         preview_only: false,
       });
-      toast.success(response.data.message);
+      toast.success(normalizeObject(response.data).message || "Sloturi refăcute");
       setClonePreview(null);
-      fetchData();
+      await fetchData();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Eroare la refacerea sloturilor");
+      toast.error(getApiErrorMessage(error, "Eroare la refacerea sloturilor"));
     } finally {
       setAutoGenerating(false);
     }
@@ -1120,18 +1138,20 @@ export const AdminScheduleView = () => {
                 variant="destructive"
                 size="sm"
                 onClick={() => deleteEmergencySlot(emergencyDialog.existing.id)}
+                disabled={deletingEmergencySlotId === emergencyDialog.existing.id || savingEmergencySlot}
                 data-testid="delete-emergency-slot"
               >
-                Șterge Slot
+                {deletingEmergencySlotId === emergencyDialog.existing.id ? "Se șterge..." : "Șterge Slot"}
               </Button>
             )}
             <Button
               className="bg-amber-600 hover:bg-amber-700"
               onClick={saveEmergencySlot}
+              disabled={savingEmergencySlot || deletingEmergencySlotId !== null}
               data-testid="save-emergency-slot"
             >
               <Flame className="w-4 h-4 mr-2" />
-              Salvează
+              {savingEmergencySlot ? "Se salvează..." : "Salvează"}
             </Button>
           </DialogFooter>
         </DialogContent>

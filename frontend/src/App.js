@@ -4,6 +4,7 @@ import LoginPage from "./pages/LoginPage";
 import AdminDashboard from "./pages/AdminDashboard";
 import DriverApp from "./pages/DriverApp";
 import RestaurantApp from "./pages/RestaurantApp";
+import { ConnectionStatusBanner } from "./components/ConnectionStatusBanner";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { ThemeProvider, useTheme } from "./context/ThemeContext";
 import "./App.css";
@@ -90,6 +91,7 @@ const AppShell = () => {
 
   return (
     <>
+      <ConnectionStatusBanner />
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />

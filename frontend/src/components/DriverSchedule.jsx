@@ -22,6 +22,7 @@ import {
   Flame,
   CheckCircle2,
 } from "lucide-react";
+import { getApiErrorMessage, normalizeArray, normalizeObject, retryApiCall } from "../lib/api";
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 
@@ -90,13 +91,15 @@ export const DriverSchedule = ({ driverId }) => {
   const fetchSchedule = useCallback(async () => {
     if (!driverId) return;
     try {
-      const [schedRes, windowRes, emergencyRes] = await Promise.all([
+      const [schedRes, windowRes, emergencyRes] = await retryApiCall(() => Promise.all([
         axios.get(`${API_URL}/api/schedules/driver/${driverId}?year=${weekStart.getFullYear()}`),
         axios.get(`${API_URL}/api/schedules/scheduling-window`),
         axios.get(`${API_URL}/api/schedules/emergency?week_start=${toISODate(weekStart)}`),
-      ]);
+      ]));
       const wsKey = toISODate(weekStart);
-      const found = schedRes.data.find((s) => s.week_start === wsKey);
+      const schedules = normalizeArray(schedRes.data);
+      const windowData = normalizeObject(windowRes.data);
+      const found = schedules.find((s) => s.week_start === wsKey);
       if (found) {
         setSlots(found.slots || {});
         setTotalHours(found.total_hours || 0);
@@ -104,12 +107,13 @@ export const DriverSchedule = ({ driverId }) => {
         setSlots({});
         setTotalHours(0);
       }
-      setWindowOpen(windowRes.data.can_select_schedule ?? windowRes.data.is_open);
-      setScheduleWindowInfo(windowRes.data);
-      setEmergencySlots(emergencyRes.data);
-    } catch {
+      setWindowOpen(windowData.can_select_schedule ?? windowData.is_open);
+      setScheduleWindowInfo(windowData);
+      setEmergencySlots(normalizeArray(emergencyRes.data));
+    } catch (error) {
       setSlots({});
       setTotalHours(0);
+      toast.error(getApiErrorMessage(error, "Nu am putut încărca programul"));
     }
   }, [driverId, weekStart]);
 
@@ -173,21 +177,22 @@ export const DriverSchedule = ({ driverId }) => {
   };
 
   const claimEmergencySlot = async () => {
-    if (!claimDialog) return;
+    if (!claimDialog || claiming) return;
     setClaiming(true);
     try {
       const res = await axios.post(`${API_URL}/api/schedules/emergency/${claimDialog.id}/claim`);
-      toast.success(res.data.message);
+      toast.success(normalizeObject(res.data).message || "Slot preluat");
       setClaimDialog(null);
-      fetchSchedule();
+      await fetchSchedule();
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Eroare la preluare slot");
+      toast.error(getApiErrorMessage(err, "Eroare la preluare slot"));
     } finally {
       setClaiming(false);
     }
   };
 
   const saveSchedule = async () => {
+    if (saving) return;
     if (!windowOpen) {
       toast.error("Programul poate fi modificat doar Duminică 22:00 - Luni 10:00");
       return;
@@ -201,9 +206,9 @@ export const DriverSchedule = ({ driverId }) => {
         source: "driver",
       });
       toast.success("Program salvat cu succes!");
-      fetchSchedule();
+      await fetchSchedule();
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Eroare la salvare");
+      toast.error(getApiErrorMessage(err, "Eroare la salvare"));
     } finally {
       setSaving(false);
     }

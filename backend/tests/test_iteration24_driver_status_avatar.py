@@ -12,7 +12,7 @@ import requests
 from PIL import Image
 from pymongo import MongoClient
 
-from _settings import BASE_URL, admin_credentials, driver_credentials
+from _settings import BASE_URL, CORS_ORIGIN, admin_credentials, clear_login_attempts, driver_credentials
 
 
 def _session() -> requests.Session:
@@ -49,15 +49,7 @@ def _find_driver(drivers: list[dict], email: str | None = None) -> dict:
 
 
 def _clear_login_attempts(email: str) -> None:
-    mongo_url = os.environ.get("MONGO_URL")
-    db_name = os.environ.get("DB_NAME")
-    if not mongo_url or not db_name:
-        return
-    client = MongoClient(mongo_url)
-    try:
-        client[db_name]["login_attempts"].delete_many({"email": email})
-    finally:
-        client.close()
+    clear_login_attempts(email)
 
 
 @pytest.fixture(scope="module")
@@ -123,13 +115,13 @@ def test_auth_cors_preflight_requires_explicit_origin_with_credentials():
     response = requests.options(
         f"{BASE_URL}/api/auth/login",
         headers={
-            "Origin": BASE_URL,
+            "Origin": CORS_ORIGIN,
             "Access-Control-Request-Method": "POST",
         },
         timeout=25,
     )
     assert response.status_code in (200, 204)
-    assert response.headers.get("access-control-allow-origin") == BASE_URL
+    assert response.headers.get("access-control-allow-origin") == CORS_ORIGIN
     assert response.headers.get("access-control-allow-credentials") == "true"
 
 
@@ -391,12 +383,23 @@ def test_create_driver_regression_vehicle_type_and_verification_fields(admin_ses
 
 def test_order_assignment_regression_and_driver_current_order_endpoint(admin_session: requests.Session, driver_session: tuple[requests.Session, dict]):
     # Orders-driver integration module: assign order and verify driver current order feed works.
-    _, driver_payload = driver_session
+    driver_client, driver_payload = driver_session
     driver_id = driver_payload.get("user", {}).get("driver_id")
     assert driver_id
 
     seed_response = admin_session.post(f"{BASE_URL}/api/seed", timeout=45)
     assert seed_response.status_code == 200
+
+    current_orders = driver_client.get(f"{BASE_URL}/api/orders/driver/{driver_id}", timeout=25)
+    assert current_orders.status_code == 200
+    for current_order in current_orders.json():
+        if current_order.get("status") == "PICKED_UP":
+            delivered = driver_client.put(
+                f"{BASE_URL}/api/orders/{current_order['id']}/status",
+                json={"status": "DELIVERED"},
+                timeout=25,
+            )
+            assert delivered.status_code == 200, delivered.text
 
     activate_response = admin_session.put(
         f"{BASE_URL}/api/drivers/{driver_id}/status",

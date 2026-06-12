@@ -21,6 +21,9 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 FAILED_LOGIN_LIMIT = 5
 LOCKOUT_MINUTES = 15
 PUBLIC_REGISTRATION_ROLE = "driver"
+REGISTRATION_WINDOW_MINUTES = 60
+REGISTRATION_IP_LIMIT = 30
+REGISTRATION_EMAIL_LIMIT = 5
 
 
 def _now_utc() -> datetime:
@@ -46,6 +49,45 @@ def _attempt_identifiers(request: Request, email: str) -> list[str]:
         f"ip:{_client_ip(request)}:{normalized_email}",
         f"email:{normalized_email}",
     ]
+
+
+def _registration_identifiers(request: Request, email: str) -> list[tuple[str, int]]:
+    normalized_email = email.strip().lower()
+    return [
+        (f"register:ip:{_client_ip(request)}", REGISTRATION_IP_LIMIT),
+        (f"register:email:{normalized_email}", REGISTRATION_EMAIL_LIMIT),
+    ]
+
+
+async def _ensure_registration_not_limited(request: Request, email: str) -> None:
+    now = _now_utc()
+    for identifier, limit in _registration_identifiers(request, email):
+        attempt = await db.registration_attempts.find_one({"identifier": identifier}, {"_id": 0})
+        if not attempt:
+            continue
+        window_started_at = _parse_dt(attempt.get("window_started_at"))
+        if not window_started_at or now - window_started_at >= timedelta(minutes=REGISTRATION_WINDOW_MINUTES):
+            continue
+        if int(attempt.get("count", 0)) >= limit:
+            raise HTTPException(status_code=429, detail="Prea multe înregistrări. Încearcă din nou mai târziu.")
+
+
+async def _record_registration_attempt(request: Request, email: str) -> None:
+    now = _now_utc()
+    for identifier, _ in _registration_identifiers(request, email):
+        attempt = await db.registration_attempts.find_one({"identifier": identifier}, {"_id": 0})
+        window_started_at = _parse_dt(attempt.get("window_started_at")) if attempt else None
+        if not attempt or not window_started_at or now - window_started_at >= timedelta(minutes=REGISTRATION_WINDOW_MINUTES):
+            await db.registration_attempts.update_one(
+                {"identifier": identifier},
+                {"$set": {"count": 1, "window_started_at": now.isoformat(), "last_attempt_at": now.isoformat()}},
+                upsert=True,
+            )
+            continue
+        await db.registration_attempts.update_one(
+            {"identifier": identifier},
+            {"$inc": {"count": 1}, "$set": {"last_attempt_at": now.isoformat()}},
+        )
 
 
 async def _ensure_not_locked(request: Request, email: str) -> None:
@@ -88,6 +130,9 @@ async def _clear_failed_logins(request: Request, email: str) -> None:
 @router.post("/register")
 async def register(user_data: UserCreate, request: Request, response: Response):
     normalized_email = user_data.email.strip().lower()
+    await _ensure_registration_not_limited(request, normalized_email)
+    await _record_registration_attempt(request, normalized_email)
+
     existing = await db.users.find_one({"email": normalized_email})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")

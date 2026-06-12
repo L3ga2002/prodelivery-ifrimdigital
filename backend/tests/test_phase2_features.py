@@ -13,20 +13,21 @@ from tests._settings import (
     DRIVER_PASSWORD,
     RESTAURANT_EMAIL,
     RESTAURANT_PASSWORD,
+    clear_login_attempts,
+    seed_demo_data,
 )
 
 
 @pytest.fixture(scope="module")
 def seed_data():
     """Seed database with demo data once for all tests"""
-    response = requests.post(f"{BASE_URL}/api/seed")
-    assert response.status_code == 200
-    return response.json()
+    return seed_demo_data()
 
 
 @pytest.fixture
 def admin_token(seed_data):
     """Get admin authentication token"""
+    clear_login_attempts(ADMIN_EMAIL)
     response = requests.post(f"{BASE_URL}/api/auth/login", json={
         "email": ADMIN_EMAIL,
         "password": ADMIN_PASSWORD
@@ -39,6 +40,7 @@ def admin_token(seed_data):
 @pytest.fixture
 def driver_token_and_id(seed_data):
     """Get driver authentication token and driver_id"""
+    clear_login_attempts(DRIVER_EMAIL)
     response = requests.post(f"{BASE_URL}/api/auth/login", json={
         "email": DRIVER_EMAIL,
         "password": DRIVER_PASSWORD
@@ -52,6 +54,7 @@ def driver_token_and_id(seed_data):
 @pytest.fixture
 def restaurant_token_and_id(seed_data):
     """Get restaurant authentication token and restaurant_id"""
+    clear_login_attempts(RESTAURANT_EMAIL)
     response = requests.post(f"{BASE_URL}/api/auth/login", json={
         "email": RESTAURANT_EMAIL,
         "password": RESTAURANT_PASSWORD
@@ -77,7 +80,8 @@ class TestSeedEndpoint:
     """Test seed creates proper demo data"""
 
     def test_seed_creates_100_orders_5_drivers_5_restaurants(self, seed_data):
-        assert seed_data["data"]["orders"] == 100
+        assert seed_data["data"]["orders"] >= 100
+        assert seed_data["data"]["demo_routes"] == 3
         assert seed_data["data"]["drivers"] == 5
         assert seed_data["data"]["restaurants"] == 5
 
@@ -202,10 +206,10 @@ class TestAnalyticsEndpoint:
 class TestScheduleEndpoints:
     """Test driver scheduling system"""
 
-    def test_create_schedule(self, driver_token_and_id):
+    def test_create_schedule(self, driver_token_and_id, admin_token):
         """Test POST /api/schedules creates/updates driver schedule"""
-        token, driver_id = driver_token_and_id
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        _, driver_id = driver_token_and_id
+        headers = {"Authorization": f"Bearer {admin_token}", "Content-Type": "application/json"}
 
         response = requests.post(f"{BASE_URL}/api/schedules", headers=headers, json={
             "driver_id": driver_id,
@@ -252,10 +256,10 @@ class TestScheduleEndpoints:
             assert "total_orders_delivered" in driver
             assert "schedules" in driver
 
-    def test_schedule_update_existing(self, driver_token_and_id):
+    def test_schedule_update_existing(self, driver_token_and_id, admin_token):
         """Test updating an existing schedule for same week"""
-        token, driver_id = driver_token_and_id
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        _, driver_id = driver_token_and_id
+        headers = {"Authorization": f"Bearer {admin_token}", "Content-Type": "application/json"}
 
         # Create initial schedule
         requests.post(f"{BASE_URL}/api/schedules", headers=headers, json={
@@ -352,7 +356,7 @@ class TestOrderWorkflow:
         response = requests.put(
             f"{BASE_URL}/api/orders/{new_order['id']}/preparing",
             headers=headers,
-            json={"preparation_time": 15}
+            json={"preparation_time": 20}
         )
         assert response.status_code == 200
 
@@ -360,7 +364,7 @@ class TestOrderWorkflow:
         order_response = requests.get(f"{BASE_URL}/api/orders/{new_order['id']}", headers=headers)
         order = order_response.json()
         assert order["status"] == "PREPARING"
-        assert order["preparation_time"] == 15
+        assert order["preparation_time"] == 20
 
 
 if __name__ == "__main__":

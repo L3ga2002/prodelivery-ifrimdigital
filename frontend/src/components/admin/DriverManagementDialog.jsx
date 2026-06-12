@@ -33,6 +33,7 @@ import { Label } from "../ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Textarea } from "../ui/textarea";
+import { getApiErrorMessage, normalizeArray, normalizeObject, retryApiCall } from "../../lib/api";
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 const DAYS = [
@@ -116,6 +117,7 @@ export const DriverManagementDialog = ({ driver, open, onOpenChange, onChanged }
   const [editSlots, setEditSlots] = useState({});
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [actionLoading, setActionLoading] = useState(null);
   const weekStart = useMemo(() => toISODate(getMonday(new Date())), []);
 
   const activeDriver = dashboard?.driver || driver;
@@ -124,9 +126,10 @@ export const DriverManagementDialog = ({ driver, open, onOpenChange, onChanged }
     if (!driver?.id) return;
     setLoading(true);
     try {
-      const response = await axios.get(`${API_URL}/api/drivers/${driver.id}/dashboard`);
-      setDashboard(response.data);
-      const freshDriver = response.data.driver;
+      const response = await retryApiCall(() => axios.get(`${API_URL}/api/drivers/${driver.id}/dashboard`));
+      const dashboardData = normalizeObject(response.data);
+      setDashboard(dashboardData);
+      const freshDriver = normalizeObject(dashboardData.driver);
       setProfileForm({
         name: freshDriver.name || "",
         phone: freshDriver.phone || "",
@@ -141,10 +144,10 @@ export const DriverManagementDialog = ({ driver, open, onOpenChange, onChanged }
         status: freshDriver.operational_status === "delivery" ? "active" : freshDriver.operational_status || "active",
         break_minutes: 30,
       });
-      const currentSchedule = response.data.schedules?.find((schedule) => schedule.week_start === weekStart);
+      const currentSchedule = normalizeArray(dashboardData.schedules).find((schedule) => schedule.week_start === weekStart);
       setEditSlots(currentSchedule?.slots || {});
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Nu am putut încărca profilul livratorului");
+      toast.error(getApiErrorMessage(error, "Nu am putut încărca profilul livratorului"));
     } finally {
       setLoading(false);
     }
@@ -169,6 +172,8 @@ export const DriverManagementDialog = ({ driver, open, onOpenChange, onChanged }
   }, [editSlots]);
 
   const saveProfile = async () => {
+    if (actionLoading) return;
+    setActionLoading("profile");
     try {
       await axios.patch(`${API_URL}/api/drivers/${activeDriver.id}/profile`, {
         ...profileForm,
@@ -179,18 +184,24 @@ export const DriverManagementDialog = ({ driver, open, onOpenChange, onChanged }
       await refreshDashboard();
       onChanged?.();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Nu am putut salva profilul");
+      toast.error(getApiErrorMessage(error, "Nu am putut salva profilul"));
+    } finally {
+      setActionLoading(null);
     }
   };
 
   const updateStatus = async () => {
+    if (actionLoading) return;
+    setActionLoading("status");
     try {
       await axios.put(`${API_URL}/api/drivers/${activeDriver.id}/status`, statusForm);
       toast.success("Status livrator actualizat");
       await refreshDashboard();
       onChanged?.();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Nu am putut actualiza statusul");
+      toast.error(getApiErrorMessage(error, "Nu am putut actualiza statusul"));
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -200,6 +211,8 @@ export const DriverManagementDialog = ({ driver, open, onOpenChange, onChanged }
       toast.error("Scorul trebuie să fie între 0 și 100");
       return;
     }
+    if (actionLoading) return;
+    setActionLoading("rank");
     try {
       await axios.patch(`${API_URL}/api/drivers/${activeDriver.id}/ranking`, {
         manual_ranking_score: numericScore,
@@ -209,18 +222,24 @@ export const DriverManagementDialog = ({ driver, open, onOpenChange, onChanged }
       await refreshDashboard();
       onChanged?.();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Nu am putut salva scorul");
+      toast.error(getApiErrorMessage(error, "Nu am putut salva scorul"));
+    } finally {
+      setActionLoading(null);
     }
   };
 
   const clearRanking = async () => {
+    if (actionLoading) return;
+    setActionLoading("rank");
     try {
       await axios.patch(`${API_URL}/api/drivers/${activeDriver.id}/ranking`, { manual_ranking_score: null, manual_rank_note: "" });
       toast.success("Scorul manual a fost eliminat");
       await refreshDashboard();
       onChanged?.();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Nu am putut elimina scorul manual");
+      toast.error(getApiErrorMessage(error, "Nu am putut elimina scorul manual"));
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -229,24 +248,32 @@ export const DriverManagementDialog = ({ driver, open, onOpenChange, onChanged }
       toast.error("Scrie STERGE pentru confirmare");
       return;
     }
+    if (actionLoading) return;
+    setActionLoading("delete");
     try {
       await axios.delete(`${API_URL}/api/drivers/${activeDriver.id}`, { params: { confirm_delete: true } });
       toast.success("Livrator șters din baza de date");
       onOpenChange(false);
       onChanged?.();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Nu am putut șterge livratorul");
+      toast.error(getApiErrorMessage(error, "Nu am putut șterge livratorul"));
+    } finally {
+      setActionLoading(null);
     }
   };
 
   const disableDriver = async () => {
+    if (actionLoading) return;
+    setActionLoading("disable");
     try {
       await axios.patch(`${API_URL}/api/drivers/${activeDriver.id}/disable`, { reason: disableReason.trim() || "Dezactivat manual de admin" });
       toast.success("Contul livratorului a fost dezactivat");
       onOpenChange(false);
       onChanged?.();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Nu am putut dezactiva contul");
+      toast.error(getApiErrorMessage(error, "Nu am putut dezactiva contul"));
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -262,6 +289,7 @@ export const DriverManagementDialog = ({ driver, open, onOpenChange, onChanged }
   };
 
   const saveSchedule = async () => {
+    if (savingSchedule) return;
     setSavingSchedule(true);
     try {
       await axios.post(`${API_URL}/api/schedules`, {
@@ -275,13 +303,14 @@ export const DriverManagementDialog = ({ driver, open, onOpenChange, onChanged }
       await refreshDashboard();
       onChanged?.();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Nu am putut salva programul");
+      toast.error(getApiErrorMessage(error, "Nu am putut salva programul"));
     } finally {
       setSavingSchedule(false);
     }
   };
 
   const uploadAvatar = async (blob, filename) => {
+    if (uploadingAvatar) return;
     setUploadingAvatar(true);
     try {
       const formData = new FormData();
@@ -291,26 +320,30 @@ export const DriverManagementDialog = ({ driver, open, onOpenChange, onChanged }
       await refreshDashboard();
       onChanged?.();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Nu am putut încărca poza");
+      toast.error(getApiErrorMessage(error, "Nu am putut încărca poza"));
     } finally {
       setUploadingAvatar(false);
     }
   };
 
   const moderateAvatar = async (avatarId, action) => {
+    if (actionLoading) return;
+    setActionLoading(`avatar:${avatarId}`);
     try {
       await axios.patch(`${API_URL}/api/drivers/${activeDriver.id}/avatars/${avatarId}`, { action });
       toast.success(action === "approve" ? "Avatar aprobat" : "Avatar respins");
       await refreshDashboard();
       onChanged?.();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Nu am putut modera poza");
+      toast.error(getApiErrorMessage(error, "Nu am putut modera poza"));
+    } finally {
+      setActionLoading(null);
     }
   };
 
-  const pendingAvatars = dashboard?.avatars?.filter((avatar) => avatar.status === "pending") || [];
-  const recentOrders = dashboard?.recent_orders || [];
-  const auditLogs = dashboard?.audit_logs || [];
+  const pendingAvatars = normalizeArray(dashboard?.avatars).filter((avatar) => avatar.status === "pending");
+  const recentOrders = normalizeArray(dashboard?.recent_orders);
+  const auditLogs = normalizeArray(dashboard?.audit_logs);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -377,7 +410,7 @@ export const DriverManagementDialog = ({ driver, open, onOpenChange, onChanged }
                       <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-100">
                         <KeyRound className="mr-2 inline h-4 w-4" /> Schimbările de email/parolă sunt logate în audit.
                       </div>
-                      <Button onClick={saveProfile} className="bg-orange-600 hover:bg-orange-700" data-testid="driver-profile-save-button"><Save className="mr-2 h-4 w-4" /> Salvează profil</Button>
+                      <Button onClick={saveProfile} disabled={actionLoading !== null} className="bg-orange-600 hover:bg-orange-700" data-testid="driver-profile-save-button"><Save className="mr-2 h-4 w-4" /> {actionLoading === "profile" ? "Se salvează..." : "Salvează profil"}</Button>
                     </CardContent>
                   </Card>
                   <Card>
@@ -386,7 +419,7 @@ export const DriverManagementDialog = ({ driver, open, onOpenChange, onChanged }
                       <div><Label>Status</Label><Select value={statusForm.status} onValueChange={(value) => setStatusForm((prev) => ({ ...prev, status: value }))}><SelectTrigger data-testid="driver-status-select"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="active">Activ</SelectItem><SelectItem value="break">În pauză</SelectItem><SelectItem value="offline">Offline</SelectItem></SelectContent></Select></div>
                       {statusForm.status === "break" && <div><Label>Durată pauză (minute)</Label><Input type="number" min="1" max="180" value={statusForm.break_minutes} onChange={(event) => setStatusForm((prev) => ({ ...prev, break_minutes: Number(event.target.value) || 30 }))} data-testid="driver-break-minutes-input" /></div>}
                       <div className="rounded-lg border bg-muted/30 p-3 text-sm"><strong>Regulă:</strong> în pauză rămâne vizibil pe hartă cu timer; offline nu apare pe hartă.</div>
-                      <Button onClick={updateStatus} data-testid="driver-status-save-button"><ShieldCheck className="mr-2 h-4 w-4" /> Actualizează status</Button>
+                      <Button onClick={updateStatus} disabled={actionLoading !== null} data-testid="driver-status-save-button"><ShieldCheck className="mr-2 h-4 w-4" /> {actionLoading === "status" ? "Se salvează..." : "Actualizează status"}</Button>
                     </CardContent>
                   </Card>
                 </div>
@@ -395,8 +428,8 @@ export const DriverManagementDialog = ({ driver, open, onOpenChange, onChanged }
                   <CardContent className="grid gap-3 md:grid-cols-[180px_1fr_auto_auto]">
                     <div><Label>Scor 0-100</Label><Input type="number" min="0" max="100" step="0.1" value={rankForm.manual_ranking_score} onChange={(event) => setRankForm((prev) => ({ ...prev, manual_ranking_score: event.target.value }))} data-testid="driver-manual-score-input" /></div>
                     <div><Label>Notă internă</Label><Textarea value={rankForm.manual_rank_note} onChange={(event) => setRankForm((prev) => ({ ...prev, manual_rank_note: event.target.value }))} data-testid="driver-rank-note-input" /></div>
-                    <Button onClick={saveRanking} className="self-end" data-testid="driver-save-rank-button"><Save className="mr-2 h-4 w-4" /> Salvează</Button>
-                    <Button variant="outline" onClick={clearRanking} className="self-end" data-testid="driver-clear-manual-rank-button">Automat</Button>
+                    <Button onClick={saveRanking} disabled={actionLoading !== null} className="self-end" data-testid="driver-save-rank-button"><Save className="mr-2 h-4 w-4" /> {actionLoading === "rank" ? "Se salvează..." : "Salvează"}</Button>
+                    <Button variant="outline" onClick={clearRanking} disabled={actionLoading !== null} className="self-end" data-testid="driver-clear-manual-rank-button">Automat</Button>
                   </CardContent>
                 </Card>
               </TabsContent>
@@ -451,7 +484,7 @@ export const DriverManagementDialog = ({ driver, open, onOpenChange, onChanged }
 
               <TabsContent value="avatar" className="grid gap-4 lg:grid-cols-2">
                 <Card><CardHeader><CardTitle className="text-base">Setează avatar ca admin</CardTitle></CardHeader><CardContent><AvatarUploadCropper onUpload={uploadAvatar} isUploading={uploadingAvatar} testIdPrefix="admin-driver-avatar" /><p className="mt-3 text-sm text-muted-foreground">Pozele încărcate de admin devin active imediat, fără aprobare.</p></CardContent></Card>
-                <Card><CardHeader><CardTitle className="text-base">Poze trimise de livrator</CardTitle></CardHeader><CardContent className="space-y-3">{pendingAvatars.length === 0 && <p className="text-sm text-muted-foreground" data-testid="driver-avatar-no-pending">Nu există poze în așteptare.</p>}{pendingAvatars.map((avatar) => (<div key={avatar.id} className="flex items-center gap-3 rounded-lg border p-3" data-testid={`driver-avatar-pending-${avatar.id}`}><img src={`${API_URL}${avatar.image_url}`} alt="Avatar pending" className="h-16 w-16 rounded-full object-cover" /><div className="flex-1"><Badge className="bg-amber-100 text-amber-800">În așteptare aprobare</Badge><p className="mt-1 text-xs text-muted-foreground">Încărcat la {new Date(avatar.uploaded_at).toLocaleString("ro-RO")}</p></div><Button size="sm" onClick={() => moderateAvatar(avatar.id, "approve")} data-testid={`driver-avatar-approve-${avatar.id}`}><CheckCircle2 className="mr-1 h-4 w-4" /> Aprobă</Button><Button size="sm" variant="destructive" onClick={() => moderateAvatar(avatar.id, "reject")} data-testid={`driver-avatar-reject-${avatar.id}`}><XCircle className="mr-1 h-4 w-4" /> Respinge</Button></div>))}</CardContent></Card>
+                <Card><CardHeader><CardTitle className="text-base">Poze trimise de livrator</CardTitle></CardHeader><CardContent className="space-y-3">{pendingAvatars.length === 0 && <p className="text-sm text-muted-foreground" data-testid="driver-avatar-no-pending">Nu există poze în așteptare.</p>}{pendingAvatars.map((avatar) => (<div key={avatar.id} className="flex items-center gap-3 rounded-lg border p-3" data-testid={`driver-avatar-pending-${avatar.id}`}><img src={`${API_URL}${avatar.image_url}`} alt="Avatar pending" className="h-16 w-16 rounded-full object-cover" /><div className="flex-1"><Badge className="bg-amber-100 text-amber-800">În așteptare aprobare</Badge><p className="mt-1 text-xs text-muted-foreground">Încărcat la {new Date(avatar.uploaded_at).toLocaleString("ro-RO")}</p></div><Button size="sm" onClick={() => moderateAvatar(avatar.id, "approve")} disabled={actionLoading !== null} data-testid={`driver-avatar-approve-${avatar.id}`}><CheckCircle2 className="mr-1 h-4 w-4" /> Aprobă</Button><Button size="sm" variant="destructive" onClick={() => moderateAvatar(avatar.id, "reject")} disabled={actionLoading !== null} data-testid={`driver-avatar-reject-${avatar.id}`}><XCircle className="mr-1 h-4 w-4" /> Respinge</Button></div>))}</CardContent></Card>
               </TabsContent>
 
               <TabsContent value="history" className="grid gap-4 lg:grid-cols-2">
@@ -461,8 +494,8 @@ export const DriverManagementDialog = ({ driver, open, onOpenChange, onChanged }
 
               <TabsContent value="danger">
                 <div className="space-y-4">
-                  <Card className="border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/20"><CardContent className="space-y-3 p-4"><p className="font-bold text-amber-950 dark:text-amber-100">Dezactivează cont</p><p className="text-sm text-amber-900/80 dark:text-amber-100/80">Recomandat pentru plecări temporare: livratorul nu se mai poate autentifica, nu apare în flotă și rămâne istoricul intact. Sistemul blochează dacă are comenzi active.</p><Textarea value={disableReason} onChange={(event) => setDisableReason(event.target.value)} placeholder="Motiv intern opțional" data-testid="driver-disable-reason-input" /><Button variant="outline" onClick={disableDriver} className="border-amber-400 text-amber-800 hover:bg-amber-100" data-testid="driver-disable-account-button"><PauseCircle className="mr-2 h-4 w-4" /> Dezactivează cont</Button></CardContent></Card>
-                  <Card className="border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/20"><CardContent className="space-y-3 p-4"><p className="font-bold text-red-900 dark:text-red-100">Ștergere definitivă din baza de date</p><p className="text-sm text-red-800/80 dark:text-red-100/80">Ștergerea elimină contul, profilul și programările. Folosește doar când e sigur că nu mai ai nevoie de cont.</p><div className="grid gap-2 sm:grid-cols-[1fr_auto]"><Input value={deleteText} onChange={(event) => setDeleteText(event.target.value)} placeholder="Scrie STERGE pentru confirmare" data-testid="driver-delete-confirm-input" /><Button variant="destructive" onClick={deleteDriver} disabled={deleteText !== "STERGE"} data-testid="driver-delete-button"><Trash2 className="mr-2 h-4 w-4" /> Șterge</Button></div></CardContent></Card>
+                  <Card className="border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/20"><CardContent className="space-y-3 p-4"><p className="font-bold text-amber-950 dark:text-amber-100">Dezactivează cont</p><p className="text-sm text-amber-900/80 dark:text-amber-100/80">Recomandat pentru plecări temporare: livratorul nu se mai poate autentifica, nu apare în flotă și rămâne istoricul intact. Sistemul blochează dacă are comenzi active.</p><Textarea value={disableReason} onChange={(event) => setDisableReason(event.target.value)} placeholder="Motiv intern opțional" data-testid="driver-disable-reason-input" /><Button variant="outline" onClick={disableDriver} disabled={actionLoading !== null} className="border-amber-400 text-amber-800 hover:bg-amber-100" data-testid="driver-disable-account-button"><PauseCircle className="mr-2 h-4 w-4" /> {actionLoading === "disable" ? "Se dezactivează..." : "Dezactivează cont"}</Button></CardContent></Card>
+                  <Card className="border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/20"><CardContent className="space-y-3 p-4"><p className="font-bold text-red-900 dark:text-red-100">Ștergere definitivă din baza de date</p><p className="text-sm text-red-800/80 dark:text-red-100/80">Ștergerea elimină contul, profilul și programările. Folosește doar când e sigur că nu mai ai nevoie de cont.</p><div className="grid gap-2 sm:grid-cols-[1fr_auto]"><Input value={deleteText} onChange={(event) => setDeleteText(event.target.value)} placeholder="Scrie STERGE pentru confirmare" data-testid="driver-delete-confirm-input" /><Button variant="destructive" onClick={deleteDriver} disabled={deleteText !== "STERGE" || actionLoading !== null} data-testid="driver-delete-button"><Trash2 className="mr-2 h-4 w-4" /> {actionLoading === "delete" ? "Se șterge..." : "Șterge"}</Button></div></CardContent></Card>
                 </div>
               </TabsContent>
             </Tabs>

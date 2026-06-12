@@ -7,7 +7,7 @@ import requests
 import pytest
 from pymongo import MongoClient
 
-from _settings import BASE_URL, admin_credentials, driver_credentials
+from _settings import BASE_URL, CORS_ORIGIN, admin_credentials, clear_login_attempts, driver_credentials
 
 
 def _session() -> requests.Session:
@@ -27,15 +27,7 @@ def _login(session: requests.Session, creds: dict[str, str]) -> dict:
 
 
 def _clear_login_attempts(identifier: str) -> None:
-    mongo_url = os.environ.get("MONGO_URL")
-    db_name = os.environ.get("DB_NAME")
-    if not mongo_url or not db_name:
-        return
-    client = MongoClient(mongo_url)
-    try:
-        client[db_name]["login_attempts"].delete_many({"email": identifier})
-    finally:
-        client.close()
+    clear_login_attempts(identifier)
 
 
 @pytest.fixture(scope="module")
@@ -70,13 +62,13 @@ def test_auth_cors_preflight_uses_explicit_origin_for_credentials():
     response = requests.options(
         f"{BASE_URL}/api/auth/login",
         headers={
-            "Origin": BASE_URL,
+            "Origin": CORS_ORIGIN,
             "Access-Control-Request-Method": "POST",
         },
         timeout=25,
     )
     assert response.status_code in (200, 204)
-    assert response.headers.get("access-control-allow-origin") == BASE_URL
+    assert response.headers.get("access-control-allow-origin") == CORS_ORIGIN
     assert response.headers.get("access-control-allow-credentials") == "true"
 
 

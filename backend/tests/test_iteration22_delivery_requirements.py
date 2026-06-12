@@ -6,7 +6,7 @@ import uuid
 import pytest
 import requests
 
-from _settings import BASE_URL, admin_credentials
+from _settings import BASE_URL, CORS_ORIGIN, admin_credentials, clear_login_attempts, login_session
 
 
 def _current_monday_iso() -> str:
@@ -17,14 +17,9 @@ def _current_monday_iso() -> str:
 
 def _login_admin_session() -> tuple[requests.Session, requests.Response]:
     # Auth module: admin login bootstrap for protected endpoint testing.
-    session = requests.Session()
-    session.headers.update({"Content-Type": "application/json"})
+    session, _ = login_session(admin_credentials(), timeout=20)
     response = session.post(f"{BASE_URL}/api/auth/login", json=admin_credentials(), timeout=20)
     assert response.status_code == 200
-    payload = response.json()
-    token = payload.get("token")
-    assert isinstance(token, str) and len(token) > 0
-    session.headers.update({"Authorization": f"Bearer {token}"})
     return session, response
 
 
@@ -48,7 +43,7 @@ def test_login_sets_http_only_access_and_refresh_cookies():
 
 def test_cors_preflight_allows_credentials_for_explicit_origin():
     # Auth/CORS module: frontend origin must be explicitly allowed with credentials.
-    origin = BASE_URL
+    origin = CORS_ORIGIN
     response = requests.options(
         f"{BASE_URL}/api/auth/login",
         headers={
@@ -157,17 +152,21 @@ def test_zone_protection_blocks_update_and_delete_without_confirm(admin_session:
 def test_auth_bruteforce_lockout_after_five_failed_attempts():
     # Auth hardening module: brute-force guard should lock account after repeated failures.
     email = admin_credentials()["email"]
-    for _ in range(5):
-        failed = requests.post(
+    clear_login_attempts(email)
+    try:
+        for _ in range(5):
+            failed = requests.post(
+                f"{BASE_URL}/api/auth/login",
+                json={"email": email, "password": "wrong-password"},
+                timeout=20,
+            )
+            assert failed.status_code == 401
+
+        locked = requests.post(
             f"{BASE_URL}/api/auth/login",
-            json={"email": email, "password": "wrong-password"},
+            json={"email": email, "password": admin_credentials()["password"]},
             timeout=20,
         )
-        assert failed.status_code == 401
-
-    locked = requests.post(
-        f"{BASE_URL}/api/auth/login",
-        json={"email": email, "password": admin_credentials()["password"]},
-        timeout=20,
-    )
-    assert locked.status_code in (423, 429), locked.text
+        assert locked.status_code in (423, 429), locked.text
+    finally:
+        clear_login_attempts(email)

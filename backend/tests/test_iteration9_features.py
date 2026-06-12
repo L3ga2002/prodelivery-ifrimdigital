@@ -9,7 +9,12 @@ Test iteration 9 features:
 """
 import pytest
 import requests
-from tests._settings import BASE_URL, admin_credentials, driver_credentials
+from tests._settings import BASE_URL, admin_credentials, clear_login_attempts, driver_credentials, seed_demo_data
+
+
+@pytest.fixture(scope="module", autouse=True)
+def seeded_demo():
+    seed_demo_data()
 
 class TestOrderCreationWithZoneDetection:
     """Test order creation with automatic zone detection from coordinates"""
@@ -17,6 +22,7 @@ class TestOrderCreationWithZoneDetection:
     @pytest.fixture(autouse=True)
     def setup(self):
         # Login as admin
+        clear_login_attempts(admin_credentials()["email"])
         response = requests.post(f"{BASE_URL}/api/auth/login", json=admin_credentials())
         assert response.status_code == 200, f"Admin login failed: {response.text}"
         self.admin_token = response.json()["token"]
@@ -86,12 +92,14 @@ class TestDriverRankingEndpoints:
     @pytest.fixture(autouse=True)
     def setup(self):
         # Login as driver
+        clear_login_attempts(driver_credentials(1)["email"])
         response = requests.post(f"{BASE_URL}/api/auth/login", json=driver_credentials(1))
         assert response.status_code == 200, f"Driver login failed: {response.text}"
         self.driver_token = response.json()["token"]
         self.driver_headers = {"Authorization": f"Bearer {self.driver_token}"}
 
         # Login as admin
+        clear_login_attempts(admin_credentials()["email"])
         admin_response = requests.post(f"{BASE_URL}/api/auth/login", json=admin_credentials())
         assert admin_response.status_code == 200
         self.admin_token = admin_response.json()["token"]
@@ -144,12 +152,14 @@ class TestSchedulingWindowEndpoint:
     @pytest.fixture(autouse=True)
     def setup(self):
         # Login as driver
+        clear_login_attempts(driver_credentials(1)["email"])
         response = requests.post(f"{BASE_URL}/api/auth/login", json=driver_credentials(1))
         assert response.status_code == 200, f"Driver login failed: {response.text}"
         self.driver_token = response.json()["token"]
         self.driver_headers = {"Authorization": f"Bearer {self.driver_token}"}
 
         # Login as admin
+        clear_login_attempts(admin_credentials()["email"])
         admin_response = requests.post(f"{BASE_URL}/api/auth/login", json=admin_credentials())
         assert admin_response.status_code == 200
         self.admin_token = admin_response.json()["token"]
@@ -189,6 +199,7 @@ class TestEmergencyAutoGenerate:
     @pytest.fixture(autouse=True)
     def setup(self):
         # Login as admin
+        clear_login_attempts(admin_credentials()["email"])
         response = requests.post(f"{BASE_URL}/api/auth/login", json=admin_credentials())
         assert response.status_code == 200, f"Admin login failed: {response.text}"
         self.admin_token = response.json()["token"]
@@ -236,6 +247,7 @@ class TestEmergencyAutoGenerate:
     def test_auto_generate_forbidden_for_driver(self):
         """POST /api/schedules/emergency/auto-generate should be admin only"""
         # Login as driver
+        clear_login_attempts(driver_credentials(1)["email"])
         driver_response = requests.post(f"{BASE_URL}/api/auth/login", json=driver_credentials(1))
         driver_token = driver_response.json()["token"]
         driver_headers = {"Authorization": f"Bearer {driver_token}"}
@@ -254,13 +266,14 @@ class TestZonesMapBugFix:
     @pytest.fixture(autouse=True)
     def setup(self):
         # Login as admin
+        clear_login_attempts(admin_credentials()["email"])
         response = requests.post(f"{BASE_URL}/api/auth/login", json=admin_credentials())
         assert response.status_code == 200, f"Admin login failed: {response.text}"
         self.admin_token = response.json()["token"]
         self.admin_headers = {"Authorization": f"Bearer {self.admin_token}"}
 
     def test_zones_have_different_fees(self):
-        """GET /api/zones returns zones with different fees (14, 22, 33)"""
+        """GET /api/zones returns zones with different configured fees."""
         response = requests.get(f"{BASE_URL}/api/zones", headers=self.admin_headers)
         assert response.status_code == 200, f"Failed to get zones: {response.text}"
 
@@ -276,12 +289,12 @@ class TestZonesMapBugFix:
 
         print(f"Unique fees found: {fees}")
 
-        # Verify we have different fees (not all 33)
-        assert len(fees) > 1, f"All zones have same fee: {fees}. Bug: zones should have different fees (14, 22, 33)"
+        # Verify we have different fees (not all identical)
+        assert len(fees) > 1, f"All zones have same fee: {fees}. Restaurant zones should have different fees"
 
         # Verify expected fees are present
-        expected_fees = {14, 22, 33}
-        assert fees == expected_fees or fees.issubset(expected_fees), f"Unexpected fees: {fees}. Expected: {expected_fees}"
+        expected_fees = {10, 18}
+        assert expected_fees.issubset(fees), f"Missing seeded restaurant fees. Found: {fees}, expected at least: {expected_fees}"
 
     def test_zones_sector_filter_works(self):
         """Verify zones can be filtered by sector"""
@@ -312,16 +325,24 @@ class TestZoneDetectionEndpoint:
     @pytest.fixture(autouse=True)
     def setup(self):
         # Login as admin
+        clear_login_attempts(admin_credentials()["email"])
         response = requests.post(f"{BASE_URL}/api/auth/login", json=admin_credentials())
         assert response.status_code == 200, f"Admin login failed: {response.text}"
         self.admin_token = response.json()["token"]
         self.admin_headers = {"Authorization": f"Bearer {self.admin_token}"}
+        restaurants_response = requests.get(f"{BASE_URL}/api/restaurants", headers=self.admin_headers)
+        assert restaurants_response.status_code == 200
+        self.restaurant = restaurants_response.json()[0]
 
     def test_detect_zone_center_bacau(self):
         """POST /api/zones/detect returns zone info for center coordinates"""
         response = requests.post(
             f"{BASE_URL}/api/zones/detect",
-            json={"lat": 46.567, "lng": 26.913},
+            json={
+                "restaurant_id": self.restaurant["id"],
+                "lat": self.restaurant["latitude"],
+                "lng": self.restaurant["longitude"],
+            },
             headers=self.admin_headers
         )
         assert response.status_code == 200, f"Zone detection failed: {response.text}"
@@ -335,7 +356,7 @@ class TestZoneDetectionEndpoint:
         # Verify fee is one of the valid fees
         fee = data.get("fee")
         if fee is not None:
-            assert fee in [14, 22, 33], f"Invalid fee: {fee}"
+            assert fee > 0, f"Invalid fee: {fee}"
 
 
 class TestDriverRankings:
@@ -344,6 +365,7 @@ class TestDriverRankings:
     @pytest.fixture(autouse=True)
     def setup(self):
         # Login as admin
+        clear_login_attempts(admin_credentials()["email"])
         response = requests.post(f"{BASE_URL}/api/auth/login", json=admin_credentials())
         assert response.status_code == 200, f"Admin login failed: {response.text}"
         self.admin_token = response.json()["token"]

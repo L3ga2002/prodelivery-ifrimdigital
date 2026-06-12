@@ -17,6 +17,7 @@ from starlette.requests import Request
 from _settings import (
     BASE_URL,
     admin_credentials,
+    clear_login_attempts,
     driver_credentials,
     restaurant_credentials,
 )
@@ -53,6 +54,7 @@ def _request_for_scheme(scheme: str) -> Request:
 
 
 def _login(credentials: dict[str, str]) -> tuple[requests.Session, dict]:
+    clear_login_attempts(credentials["email"])
     session = _session()
     response = session.post(f"{BASE_URL}/api/auth/login", json=credentials, timeout=25)
     assert response.status_code == 200, response.text

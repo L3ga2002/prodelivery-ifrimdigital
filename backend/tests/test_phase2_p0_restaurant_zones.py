@@ -30,8 +30,8 @@ def admin_session_and_token():
 @pytest.fixture(scope="module")
 def seeded(admin_session_and_token):
     # Seed once for deterministic baseline data used by zone/order tests
-    session, _, _ = admin_session_and_token
-    response = session.post(f"{BASE_URL}/api/seed")
+    session, headers, _ = admin_session_and_token
+    response = session.post(f"{BASE_URL}/api/seed", headers=headers)
     assert response.status_code == 200
     payload = response.json()
     assert "data" in payload
@@ -187,4 +187,8 @@ class TestP0RestaurantZonesBackend:
             assert persisted["delivery_zone_name"] == order["delivery_zone_name"]
             assert persisted["restaurant_id"] == restaurant["id"]
         finally:
-            session.delete(f"{BASE_URL}/api/zones/{zone['id']}", headers=headers)
+            session.delete(
+                f"{BASE_URL}/api/zones/{zone['id']}",
+                params={"confirm_protected_action": "true"},
+                headers=headers,
+            )

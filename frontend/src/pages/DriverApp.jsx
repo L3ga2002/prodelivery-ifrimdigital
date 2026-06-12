@@ -47,6 +47,8 @@ import { DriverSchedule } from "../components/DriverSchedule";
 import { AvatarUploadCropper } from "../components/AvatarUploadCropper";
 import { DriverAvatar } from "../components/DriverAvatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
+import { getApiErrorMessage, normalizeArray, normalizeObject, retryApiCall } from "../lib/api";
+import { useNetworkStatus } from "../hooks/useNetworkStatus";
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 const DRIVER_ORDER_POLL_INTERVAL_MS = 5000;
@@ -104,16 +106,22 @@ const getCurrentStepLabel = (order) => {
 
 const DriverApp = () => {
   const { user, logout } = useAuth();
+  const { isOnline } = useNetworkStatus();
   const [currentOrder, setCurrentOrder] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshingOrder, setIsRefreshingOrder] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isSavingOperationalStatus, setIsSavingOperationalStatus] = useState(false);
+  const [isCancellingOrder, setIsCancellingOrder] = useState(false);
   const [canInstall, setCanInstall] = useState(false);
   const [activeTab, setActiveTab] = useState("home");
   const lastOrderIdRef = useRef(null);
   const hasLoadedOrdersRef = useRef(false);
+  const fetchOrderRequestRef = useRef(0);
   const [newOrderFlash, setNewOrderFlash] = useState(false);
   const [emailCode, setEmailCode] = useState("");
   const [emailVerified, setEmailVerified] = useState(user?.email_verified !== false);
+  const [isVerifyingEmail, setIsVerifyingEmail] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null); // {status, label}
   const [cancelDialog, setCancelDialog] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
@@ -152,15 +160,19 @@ const DriverApp = () => {
     deferredPrompt = null;
   };
 
-  const fetchOrder = useCallback(async () => {
+  const fetchOrder = useCallback(async ({ manual = false, silent = false } = {}) => {
     if (!user?.driver_id) {
       setIsLoading(false);
       return;
     }
 
+    const requestId = fetchOrderRequestRef.current + 1;
+    fetchOrderRequestRef.current = requestId;
+    if (manual) setIsRefreshingOrder(true);
     try {
-      const response = await axios.get(`${API_URL}/api/orders/driver/${user.driver_id}`);
-      const orders = response.data;
+      const response = await retryApiCall(() => axios.get(`${API_URL}/api/orders/driver/${user.driver_id}`));
+      if (requestId !== fetchOrderRequestRef.current) return;
+      const orders = normalizeArray(response.data);
       // Get the first non-delivered order
       const activeOrder = orders.find((o) => o.status !== "DELIVERED");
 
@@ -196,20 +208,28 @@ const DriverApp = () => {
       }
 
       setCurrentOrder(activeOrder || null);
-    } catch {
-      toast.error("Nu am putut încărca livrarea curentă");
+    } catch (error) {
+      if (requestId === fetchOrderRequestRef.current) {
+        if (!silent) {
+          toast.error(getApiErrorMessage(error, "Nu am putut încărca livrarea curentă"));
+        }
+      }
     } finally {
-      setIsLoading(false);
-      hasLoadedOrdersRef.current = true;
+      if (requestId === fetchOrderRequestRef.current) {
+        setIsLoading(false);
+        hasLoadedOrdersRef.current = true;
+      }
+      if (manual) setIsRefreshingOrder(false);
     }
   }, [user?.driver_id]);
 
   const fetchDriverProfile = useCallback(async () => {
     if (!user?.driver_id) return;
     try {
-      const response = await axios.get(`${API_URL}/api/drivers/${user.driver_id}/dashboard`);
-      setDriverDashboard(response.data);
-      const driver = response.data.driver || {};
+      const response = await retryApiCall(() => axios.get(`${API_URL}/api/drivers/${user.driver_id}/dashboard`));
+      const dashboard = normalizeObject(response.data);
+      setDriverDashboard(dashboard);
+      const driver = normalizeObject(dashboard.driver);
       const fallback = splitName(driver.name || user?.name || "");
       setProfileForm({
         first_name: driver.first_name || fallback.first_name,
@@ -220,13 +240,13 @@ const DriverApp = () => {
         phone: driver.phone || user?.phone || "",
         email: driver.email || user?.email || "",
       });
-      const status = response.data.driver?.operational_status || "active";
+      const status = driver.operational_status || "active";
       setDriverStatusForm((prev) => ({
         ...prev,
         status: status === "delivery" ? "active" : status,
       }));
-    } catch {
-      toast.error("Nu am putut încărca profilul livratorului");
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Nu am putut încărca profilul livratorului"));
     }
   }, [user?.driver_id, user?.email, user?.name, user?.phone]);
 
@@ -235,17 +255,25 @@ const DriverApp = () => {
   }, [user?.email_verified]);
 
   const verifyEmailCode = async () => {
+    if (isVerifyingEmail) return;
+    if (!isOnline) {
+      toast.error("Nu ai conexiune la internet. Încearcă după reconectare.");
+      return;
+    }
     if (!emailCode.trim()) {
       toast.error("Introdu codul primit pe email");
       return;
     }
+    setIsVerifyingEmail(true);
     try {
       await axios.post(`${API_URL}/api/drivers/${user.driver_id}/verify-email`, { code: emailCode.trim() });
       setEmailVerified(true);
       setEmailCode("");
       toast.success("Email verificat cu succes");
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Cod invalid sau expirat");
+      toast.error(getApiErrorMessage(error, "Cod invalid sau expirat"));
+    } finally {
+      setIsVerifyingEmail(false);
     }
   };
 
@@ -257,31 +285,49 @@ const DriverApp = () => {
   }, [fetchDriverProfile, fetchOrder]);
 
   const updateDriverOperationalStatus = async () => {
+    if (isSavingOperationalStatus) return;
+    if (!isOnline) {
+      toast.error("Nu ai conexiune la internet. Încearcă după reconectare.");
+      return;
+    }
+    setIsSavingOperationalStatus(true);
     try {
       await axios.put(`${API_URL}/api/drivers/${user.driver_id}/status`, driverStatusForm);
       toast.success("Status actualizat");
-      fetchDriverProfile();
+      await fetchDriverProfile();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Nu am putut actualiza statusul");
+      toast.error(getApiErrorMessage(error, "Nu am putut actualiza statusul"));
+    } finally {
+      setIsSavingOperationalStatus(false);
     }
   };
 
   const uploadDriverAvatar = async (blob, filename) => {
+    if (avatarUploading) return;
+    if (!isOnline) {
+      toast.error("Nu ai conexiune la internet. Încearcă după reconectare.");
+      return;
+    }
     setAvatarUploading(true);
     try {
       const formData = new FormData();
       formData.append("file", blob, filename || "avatar.webp");
       await axios.post(`${API_URL}/api/drivers/${user.driver_id}/avatar`, formData, { headers: { "Content-Type": "multipart/form-data" } });
       toast.success("Poza a fost trimisă la aprobare");
-      fetchDriverProfile();
+      await fetchDriverProfile();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Nu am putut încărca poza");
+      toast.error(getApiErrorMessage(error, "Nu am putut încărca poza"));
     } finally {
       setAvatarUploading(false);
     }
   };
 
   const saveProfile = async () => {
+    if (savingProfile) return;
+    if (!isOnline) {
+      toast.error("Nu ai conexiune la internet. Încearcă după reconectare.");
+      return;
+    }
     if (!isValidPhone(profileForm.phone)) {
       toast.error("Telefonul trebuie să fie 07xxxxxxxx sau +407xxxxxxxx");
       return;
@@ -293,17 +339,22 @@ const DriverApp = () => {
     setSavingProfile(true);
     try {
       const response = await axios.patch(`${API_URL}/api/drivers/${user.driver_id}/self-profile`, profileForm);
-      setDriverDashboard((prev) => ({ ...prev, driver: response.data.driver }));
-      toast.success(response.data.email_verification_sent ? "Profil salvat. Verifică emailul nou." : "Profil salvat");
+      const result = normalizeObject(response.data);
+      setDriverDashboard((prev) => ({ ...prev, driver: result.driver }));
+      toast.success(result.email_verification_sent ? "Profil salvat. Verifică emailul nou." : "Profil salvat");
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Nu am putut salva profilul");
+      toast.error(getApiErrorMessage(error, "Nu am putut salva profilul"));
     } finally {
       setSavingProfile(false);
     }
   };
 
   const updateStatus = useCallback(async (newStatus) => {
-    if (!currentOrder) return;
+    if (!currentOrder || isUpdating) return;
+    if (!isOnline) {
+      toast.error("Nu ai conexiune la internet. Încearcă după reconectare.");
+      return;
+    }
 
     setIsUpdating(true);
     try {
@@ -322,21 +373,30 @@ const DriverApp = () => {
 
       if (newStatus === "DELIVERED") {
         setCurrentOrder(null);
-      } else {
-        fetchOrder();
       }
-    } catch {
-      toast.error("Eroare la actualizare status");
+      await fetchOrder({ silent: true });
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Eroare la actualizare status"));
     } finally {
       setIsUpdating(false);
     }
-  }, [currentOrder, fetchOrder]);
+  }, [currentOrder, fetchOrder, isOnline, isUpdating]);
 
   const handleCancelOrder = useCallback(async () => {
+    if (isCancellingOrder) return;
+    if (!isOnline) {
+      toast.error("Nu ai conexiune la internet. Încearcă după reconectare.");
+      return;
+    }
+    if (!currentOrder?.id) {
+      toast.error("Comanda nu mai este disponibilă pentru anulare.");
+      return;
+    }
     if (!cancelReason.trim()) {
       toast.error("Motivul anulării este obligatoriu!");
       return;
     }
+    setIsCancellingOrder(true);
     try {
       await axios.put(`${API_URL}/api/orders/${currentOrder.id}/status`, {
         status: "CANCELLED",
@@ -346,11 +406,13 @@ const DriverApp = () => {
       setCancelDialog(false);
       setCancelReason("");
       setCurrentOrder(null);
-      fetchOrder();
-    } catch {
-      toast.error("Eroare la anulare");
+      await fetchOrder({ silent: true });
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Eroare la anulare"));
+    } finally {
+      setIsCancellingOrder(false);
     }
-  }, [cancelReason, currentOrder?.id, fetchOrder]);
+  }, [cancelReason, currentOrder?.id, fetchOrder, isCancellingOrder, isOnline]);
 
   const openNavigation = (address) => {
     const encodedAddress = encodeURIComponent(address);
@@ -454,7 +516,7 @@ const DriverApp = () => {
             <SelectContent><SelectItem value="active">Activ</SelectItem><SelectItem value="break">În pauză</SelectItem><SelectItem value="offline">Offline</SelectItem></SelectContent>
           </Select>
           {driverStatusForm.status === "break" && <Input type="number" min="1" max="180" value={driverStatusForm.break_minutes} onChange={(event) => setDriverStatusForm((prev) => ({ ...prev, break_minutes: Number(event.target.value) || 30 }))} className="h-13 rounded-2xl border-white/10 bg-black text-white" data-testid="driver-break-minutes-input" />}
-          <Button type="button" onClick={updateDriverOperationalStatus} className="h-13 rounded-2xl bg-orange-600 font-black hover:bg-orange-700" data-testid="driver-status-update-button"><ShieldCheck className="mr-2 h-5 w-5" /> Setează status</Button>
+          <Button type="button" onClick={updateDriverOperationalStatus} disabled={isSavingOperationalStatus || !isOnline} className="h-13 rounded-2xl bg-orange-600 font-black hover:bg-orange-700" data-testid="driver-status-update-button"><ShieldCheck className="mr-2 h-5 w-5" /> {isSavingOperationalStatus ? "Se salvează..." : "Setează status"}</Button>
         </div>
       </section>
 
@@ -463,7 +525,7 @@ const DriverApp = () => {
           <Bike className="mx-auto h-14 w-14 text-orange-500" />
           <h2 className="mt-3 text-2xl font-black text-white">Aștepți livrare</h2>
           <p className="mt-2 text-sm text-zinc-400">Când ești în program și activ, comanda apare aici.</p>
-          <Button type="button" onClick={fetchOrder} className="mt-4 h-13 w-full rounded-2xl bg-orange-600 font-black" data-testid="driver-check-delivery-button"><RefreshCw className="mr-2 h-5 w-5" /> Verifică</Button>
+          <Button type="button" onClick={() => fetchOrder({ manual: true })} disabled={isRefreshingOrder || !isOnline} className="mt-4 h-13 w-full rounded-2xl bg-orange-600 font-black" data-testid="driver-check-delivery-button"><RefreshCw className={`mr-2 h-5 w-5 ${isRefreshingOrder ? "animate-spin" : ""}`} /> Verifică</Button>
         </section>
       ) : (
         <section className="space-y-3" data-testid="active-order">
@@ -499,7 +561,7 @@ const DriverApp = () => {
         <div className="flex items-center gap-4"><DriverAvatar driver={driver} size="lg" className="border-orange-400" testId="driver-profile-avatar" /><div className="min-w-0 flex-1"><p className="text-sm text-zinc-400">Profil livrator</p><h2 className="truncate text-2xl font-black">{driver.name || user?.name}</h2><div className="mt-2 flex flex-wrap gap-2"><Badge className="bg-orange-500 text-white" data-testid="driver-profile-status-badge">{statusLabel}</Badge>{driver.avatar_status === "pending" && <Badge className="bg-amber-200 text-amber-950" data-testid="driver-avatar-pending-badge">Poză în aprobare</Badge>}</div></div></div>
         <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-3"><p className="mb-3 text-sm font-bold text-orange-100"><Camera className="mr-2 inline h-4 w-4" /> Poză profil</p><AvatarUploadCropper onUpload={uploadDriverAvatar} isUploading={avatarUploading} testIdPrefix="driver-self-avatar" /></div>
       </section>
-      {!emailVerified && <Card className="border-amber-500/40 bg-amber-500/10 text-white" data-testid="driver-email-verification-card"><CardContent className="space-y-3 p-4"><p className="font-bold text-amber-100">Confirmă emailul</p><div className="grid grid-cols-[1fr_auto] gap-2"><Input value={emailCode} onChange={(event) => setEmailCode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="Cod 6 cifre" inputMode="numeric" className="h-13 rounded-2xl bg-black text-white" data-testid="driver-email-code-input" /><Button type="button" onClick={verifyEmailCode} className="rounded-2xl bg-orange-600" data-testid="driver-email-verify-button">Verifică</Button></div></CardContent></Card>}
+      {!emailVerified && <Card className="border-amber-500/40 bg-amber-500/10 text-white" data-testid="driver-email-verification-card"><CardContent className="space-y-3 p-4"><p className="font-bold text-amber-100">Confirmă emailul</p><div className="grid grid-cols-[1fr_auto] gap-2"><Input value={emailCode} onChange={(event) => setEmailCode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="Cod 6 cifre" inputMode="numeric" disabled={isVerifyingEmail} className="h-13 rounded-2xl bg-black text-white" data-testid="driver-email-code-input" /><Button type="button" onClick={verifyEmailCode} disabled={isVerifyingEmail || !emailCode.trim() || !isOnline} className="rounded-2xl bg-orange-600" data-testid="driver-email-verify-button">{isVerifyingEmail ? "..." : "Verifică"}</Button></div></CardContent></Card>}
       <section className="rounded-[1.35rem] border border-white/10 bg-zinc-950 p-4 text-white">
         <div className="grid gap-3">
           <div className="grid grid-cols-2 gap-3"><div><label className="text-xs font-bold text-zinc-400">Nume</label><Input value={profileForm.last_name} onChange={(e) => setProfileForm((p) => ({ ...p, last_name: e.target.value }))} className="mt-1 h-13 rounded-2xl border-white/10 bg-black text-white" data-testid="driver-profile-last-name-input" /></div><div><label className="text-xs font-bold text-zinc-400">Prenume</label><Input value={profileForm.first_name} onChange={(e) => setProfileForm((p) => ({ ...p, first_name: e.target.value }))} className="mt-1 h-13 rounded-2xl border-white/10 bg-black text-white" data-testid="driver-profile-first-name-input" /></div></div>
@@ -507,7 +569,7 @@ const DriverApp = () => {
           <div className="grid grid-cols-2 gap-3"><div><label className="text-xs font-bold text-zinc-400"><Cake className="mr-1 inline h-3 w-3" /> Data nașterii</label><Input type="date" value={profileForm.birth_date} onChange={(e) => setProfileForm((p) => ({ ...p, birth_date: e.target.value }))} className="mt-1 h-13 rounded-2xl border-white/10 bg-black text-white" data-testid="driver-profile-birth-date-input" /></div><div><label className="text-xs font-bold text-zinc-400"><VenusAndMars className="mr-1 inline h-3 w-3" /> Sex</label><Select value={profileForm.gender} onValueChange={(value) => setProfileForm((p) => ({ ...p, gender: value }))}><SelectTrigger className="mt-1 h-13 rounded-2xl border-white/10 bg-black text-white" data-testid="driver-profile-gender-select"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="masculin">Masculin</SelectItem><SelectItem value="feminin">Feminin</SelectItem></SelectContent></Select></div></div>
           <div><label className="text-xs font-bold text-zinc-400"><Mail className="mr-1 inline h-3 w-3" /> Email</label><Input type="email" value={profileForm.email} onChange={(e) => setProfileForm((p) => ({ ...p, email: e.target.value }))} className="mt-1 h-13 rounded-2xl border-white/10 bg-black text-white" data-testid="driver-profile-email-input" /><div className="mt-2 flex items-center gap-2 text-xs">{driver.email_verified ? <span className="text-emerald-300"><Check className="mr-1 inline h-3 w-3" /> validat</span> : <span className="text-amber-300">nevalidat · se folosește codul pe email</span>}</div></div>
           <div><label className="text-xs font-bold text-zinc-400"><Phone className="mr-1 inline h-3 w-3" /> Telefon</label><Input value={profileForm.phone} onChange={(e) => setProfileForm((p) => ({ ...p, phone: e.target.value }))} className="mt-1 h-13 rounded-2xl border-white/10 bg-black text-white" data-testid="driver-profile-phone-input" />{!isValidPhone(profileForm.phone) && <p className="mt-1 text-xs text-red-300" data-testid="driver-profile-phone-error">Format acceptat: 07xxxxxxxx sau +407xxxxxxxx.</p>}<button type="button" onClick={() => toast.info("Validarea SMS reală va fi activată când clientul decide serviciul SMS.")} className="mt-2 text-xs font-bold text-orange-300 underline" data-testid="driver-phone-validation-info-button">Telefon neverificat · SMS se conectează ulterior</button></div>
-          <Button type="button" onClick={saveProfile} disabled={savingProfile} className="mt-2 h-14 rounded-2xl bg-orange-600 text-lg font-black hover:bg-orange-700" data-testid="driver-profile-save-button">{savingProfile ? "Se salvează..." : "Salvează profil"}</Button>
+          <Button type="button" onClick={saveProfile} disabled={savingProfile || !isOnline} className="mt-2 h-14 rounded-2xl bg-orange-600 text-lg font-black hover:bg-orange-700" data-testid="driver-profile-save-button">{savingProfile ? "Se salvează..." : "Salvează profil"}</Button>
         </div>
       </section>
     </div>
@@ -522,7 +584,7 @@ const DriverApp = () => {
             <button type="button" className="grid h-11 w-11 place-items-center rounded-full bg-black/20 text-white" data-testid="driver-menu-button"><Menu className="h-6 w-6" /></button>
             <div className="flex items-center gap-2">
               {canInstall && <button type="button" onClick={installPWA} className="grid h-11 w-11 place-items-center rounded-full bg-white/10" data-testid="install-pwa-button"><Download className="h-5 w-5" /></button>}
-              <button type="button" onClick={fetchOrder} className="grid h-11 w-11 place-items-center rounded-full bg-white/10" data-testid="refresh-button"><RefreshCw className="h-5 w-5" /></button>
+              <button type="button" onClick={() => fetchOrder({ manual: true })} disabled={isRefreshingOrder || !isOnline} className="grid h-11 w-11 place-items-center rounded-full bg-white/10 disabled:opacity-50" data-testid="refresh-button"><RefreshCw className={`h-5 w-5 ${isRefreshingOrder ? "animate-spin" : ""}`} /></button>
               <button type="button" onClick={logout} className="grid h-11 w-11 place-items-center rounded-full bg-white/10" data-testid="logout-button"><LogOut className="h-5 w-5" /></button>
             </div>
           </div>
@@ -561,7 +623,7 @@ const DriverApp = () => {
             <Button
               className="driver-btn bg-orange-600 hover:bg-orange-700"
               onClick={() => updateStatus("ACCEPTED")}
-              disabled={isUpdating}
+              disabled={isUpdating || !isOnline}
               data-testid="accept-button"
             >
               <CheckCircle2 className="w-6 h-6 mr-3" />
@@ -573,7 +635,7 @@ const DriverApp = () => {
             <Button
               className="driver-btn bg-orange-500 hover:bg-orange-600"
               onClick={() => setConfirmAction({ status: "PICKED_UP", label: "Confirmați că ați ridicat comanda de la restaurant?" })}
-              disabled={isUpdating}
+              disabled={isUpdating || !isOnline}
               data-testid="pickup-button"
             >
               <Package className="w-6 h-6 mr-3" />
@@ -585,7 +647,7 @@ const DriverApp = () => {
             <Button
               className="driver-btn bg-green-600 hover:bg-green-700"
               onClick={() => setConfirmAction({ status: "DELIVERED", label: "Confirmați că ați livrat comanda clientului?" })}
-              disabled={isUpdating}
+              disabled={isUpdating || !isOnline}
               data-testid="deliver-button"
             >
               <CheckCircle2 className="w-6 h-6 mr-3" />
@@ -599,6 +661,7 @@ const DriverApp = () => {
               variant="outline"
               className="w-full text-red-600 border-red-300 hover:bg-red-50 dark:hover:bg-red-950/30 h-12"
               onClick={() => { setCancelDialog(true); setCancelReason(""); }}
+              disabled={isUpdating || isCancellingOrder || !isOnline}
               data-testid="cancel-order-button"
             >
               <XCircle className="w-5 h-5 mr-2" />
@@ -638,7 +701,7 @@ const DriverApp = () => {
             </Button>
             <Button
               onClick={() => updateStatus(confirmAction?.status)}
-              disabled={isUpdating}
+              disabled={isUpdating || !isOnline}
               data-testid="confirm-action-btn"
             >
               <CheckCircle2 className="w-4 h-4 mr-2" />
@@ -676,11 +739,11 @@ const DriverApp = () => {
             <Button
               variant="destructive"
               onClick={handleCancelOrder}
-              disabled={!cancelReason.trim()}
+              disabled={isCancellingOrder || !cancelReason.trim() || !isOnline}
               data-testid="driver-confirm-cancel-btn"
             >
               <XCircle className="w-4 h-4 mr-2" />
-              Confirmă Anularea
+              {isCancellingOrder ? "Se anulează..." : "Confirmă Anularea"}
             </Button>
           </DialogFooter>
         </DialogContent>

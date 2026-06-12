@@ -12,7 +12,7 @@ Tests:
 import pytest
 import requests
 from datetime import datetime, timedelta
-from tests._settings import BASE_URL, admin_credentials, driver_credentials
+from tests._settings import BASE_URL, admin_credentials, clear_login_attempts, driver_credentials, seed_demo_data
 
 # Get current week's Monday
 def get_current_monday():
@@ -32,18 +32,25 @@ class TestEmergencySlots:
     driver1_id = None
     driver2_id = None
     created_slot_id = None
+    seeded = False
 
     @pytest.fixture(autouse=True)
     def setup(self, request):
         """Setup tokens before tests"""
+        if not TestEmergencySlots.seeded:
+            seed_demo_data()
+            TestEmergencySlots.seeded = True
+
         if TestEmergencySlots.admin_token is None:
             # Login as admin
+            clear_login_attempts(admin_credentials()["email"])
             res = requests.post(f"{BASE_URL}/api/auth/login", json=admin_credentials())
             assert res.status_code == 200, f"Admin login failed: {res.text}"
             TestEmergencySlots.admin_token = res.json()["token"]
 
         if TestEmergencySlots.driver1_token is None:
             # Login as driver-001
+            clear_login_attempts(driver_credentials(1)["email"])
             res = requests.post(f"{BASE_URL}/api/auth/login", json=driver_credentials(1))
             assert res.status_code == 200, f"Driver-001 login failed: {res.text}"
             TestEmergencySlots.driver1_token = res.json()["token"]
@@ -51,6 +58,7 @@ class TestEmergencySlots:
 
         if TestEmergencySlots.driver2_token is None:
             # Login as driver-002
+            clear_login_attempts(driver_credentials(2)["email"])
             res = requests.post(f"{BASE_URL}/api/auth/login", json=driver_credentials(2))
             assert res.status_code == 200, f"Driver-002 login failed: {res.text}"
             TestEmergencySlots.driver2_token = res.json()["token"]

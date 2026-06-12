@@ -9,7 +9,7 @@ import pytest
 import requests
 from pymongo import MongoClient
 
-from _settings import BASE_URL, admin_credentials, restaurant_credentials
+from _settings import BASE_URL, CORS_ORIGIN, admin_credentials, clear_login_attempts, restaurant_credentials
 
 
 def _session() -> requests.Session:
@@ -42,6 +42,7 @@ def _db_name() -> str | None:
 @pytest.fixture(scope="module")
 def admin_session() -> requests.Session:
     # Auth module: admin login baseline for management endpoints.
+    clear_login_attempts(admin_credentials()["email"])
     session = _session()
     _login(session, admin_credentials())
     return session
@@ -50,6 +51,7 @@ def admin_session() -> requests.Session:
 @pytest.fixture(scope="module")
 def restaurant_session() -> requests.Session:
     # Auth module: restaurant login baseline for self endpoints.
+    clear_login_attempts(restaurant_credentials()["email"])
     session = _session()
     _login(session, restaurant_credentials())
     return session
@@ -262,11 +264,11 @@ def test_auth_cors_preflight_uses_explicit_origin_with_credentials():
     response = requests.options(
         f"{BASE_URL}/api/auth/login",
         headers={
-            "Origin": BASE_URL,
+            "Origin": CORS_ORIGIN,
             "Access-Control-Request-Method": "POST",
         },
         timeout=25,
     )
     assert response.status_code in (200, 204)
-    assert response.headers.get("access-control-allow-origin") == BASE_URL
+    assert response.headers.get("access-control-allow-origin") == CORS_ORIGIN
     assert response.headers.get("access-control-allow-credentials") == "true"

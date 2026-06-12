@@ -3,7 +3,7 @@ from datetime import date, timedelta
 
 import pytest
 import requests
-from _settings import BASE_URL, admin_credentials
+from _settings import BASE_URL, admin_credentials, login_session
 
 
 def _next_monday_iso() -> str:
@@ -20,22 +20,13 @@ def base_url():
 
 @pytest.fixture(scope="session")
 def admin_session(base_url):
-    session = requests.Session()
-    session.headers.update({"Content-Type": "application/json"})
+    # Auth module coverage
+    session, data = login_session(admin_credentials(), timeout=20)
+    assert data.get("user", {}).get("role") == "admin"
 
     # Seed data module coverage
     seed_res = session.post(f"{base_url}/api/seed", timeout=30)
     assert seed_res.status_code == 200
-
-    # Auth module coverage
-    login_res = session.post(
-        f"{base_url}/api/auth/login",
-        json=admin_credentials(),
-        timeout=20,
-    )
-    assert login_res.status_code == 200
-    data = login_res.json()
-    assert data.get("user", {}).get("role") == "admin"
     return session
 
 
@@ -68,7 +59,7 @@ def created_order(admin_session, base_url):
 def test_order_preparing_persists_preparation_fields(admin_session, base_url, created_order):
     response = admin_session.put(
         f"{base_url}/api/orders/{created_order}/preparing",
-        json={"preparation_time": 5},
+        json={"preparation_time": 20},
         timeout=20,
     )
     assert response.status_code == 200
@@ -78,8 +69,8 @@ def test_order_preparing_persists_preparation_fields(admin_session, base_url, cr
     order = get_res.json()
 
     assert order["status"] == "PREPARING"
-    assert order["preparation_time"] == 5
-    assert order["preparation_estimated_seconds"] == 300
+    assert order["preparation_time"] == 20
+    assert order["preparation_estimated_seconds"] == 1200
     assert isinstance(order.get("preparation_started_at"), str)
     assert isinstance(order.get("preparation_due_at"), str)
 
@@ -87,7 +78,7 @@ def test_order_preparing_persists_preparation_fields(admin_session, base_url, cr
 def test_order_ready_persists_actual_and_delay(admin_session, base_url, created_order):
     admin_session.put(
         f"{base_url}/api/orders/{created_order}/preparing",
-        json={"preparation_time": 1},
+        json={"preparation_time": 20},
         timeout=20,
     )
     time.sleep(2)

@@ -11,6 +11,7 @@
 - Updated open security issues with Fable findings: seed/register/orders/driver/schedule authorization, CSRF, lockout header trust, CORS deployment check, and public avatar/stats decisions.
 - Added `.ifrim/OPENCLAW.md` so new ProDelivery threads can recover the IfrimDigital OpenClaw agent roster and usage rules without relying on old conversation context.
 - Added live preview rules to project and central memory: app/UI work should start or verify preview, check affected routes after visible changes, and report the exact URL.
+- Added production implementation rule to project and central memory: do not implement demo-only behavior; implement real production features with validations, edge cases, error handling, loading states, duplicate-request protection, useful logs, and no broken existing flows.
 
 ## 2026-06-08
 

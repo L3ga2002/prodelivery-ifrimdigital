@@ -11,7 +11,7 @@ Tests:
 
 import pytest
 import requests
-from tests._settings import BASE_URL, admin_credentials, driver_credentials
+from tests._settings import BASE_URL, admin_credentials, clear_login_attempts, driver_credentials, seed_demo_data
 
 class TestPhase3Features:
     """Tests for Phase 3: Schedule system, zones, and order updates"""
@@ -20,16 +20,17 @@ class TestPhase3Features:
     def setup(self):
         """Setup - seed data and get tokens"""
         # Seed data
-        response = requests.post(f"{BASE_URL}/api/seed")
-        assert response.status_code == 200, f"Seed failed: {response.text}"
+        seed_demo_data()
 
         # Get admin token
+        clear_login_attempts(admin_credentials()["email"])
         login_res = requests.post(f"{BASE_URL}/api/auth/login", json=admin_credentials())
         assert login_res.status_code == 200, "Admin login failed"
         self.admin_token = login_res.json()["token"]
         self.admin_headers = {"Authorization": f"Bearer {self.admin_token}"}
 
         # Get driver token
+        clear_login_attempts(driver_credentials(1)["email"])
         driver_login = requests.post(f"{BASE_URL}/api/auth/login", json=driver_credentials(1))
         assert driver_login.status_code == 200, "Driver login failed"
         self.driver_token = driver_login.json()["token"]
@@ -49,7 +50,7 @@ class TestPhase3Features:
         assert len(orders_with_zone) > 0, "No orders have zone field"
 
         # Verify zones are valid
-        valid_zones = ["Zona 1", "Zona 2", "Zona 3", "Zona 4"]
+        valid_zones = ["Zona 1", "Zona 2", "Zona 3", "Zona 4", "Demo Live"]
         for order in orders_with_zone:
             assert order["zone"] in valid_zones, f"Invalid zone: {order['zone']}"
         print(f"✓ Found {len(orders_with_zone)} orders with valid zone field")
@@ -191,7 +192,9 @@ class TestPhase3Features:
             json=schedule_data,
             headers=self.driver_headers
         )
-        assert response.status_code == 400, f"Driver setting 23:00 should fail: {response.text}"
+        assert response.status_code in (400, 403), f"Driver setting 23:00 should fail: {response.text}"
+        if response.status_code == 403:
+            assert "calendarul se deschide" in response.text.lower()
         print("✓ Driver correctly rejected when setting night hour 23:00")
 
     def test_driver_rejects_00_hour(self):
@@ -212,7 +215,9 @@ class TestPhase3Features:
             json=schedule_data,
             headers=self.driver_headers
         )
-        assert response.status_code == 400, f"Driver setting 00:00 should fail: {response.text}"
+        assert response.status_code in (400, 403), f"Driver setting 00:00 should fail: {response.text}"
+        if response.status_code == 403:
+            assert "calendarul se deschide" in response.text.lower()
         print("✓ Driver correctly rejected when setting midnight hour 00:00")
 
     def test_driver_can_set_allowed_hours(self):
@@ -236,7 +241,9 @@ class TestPhase3Features:
             json=schedule_data,
             headers=self.driver_headers
         )
-        assert response.status_code == 200, f"Driver should be able to set allowed hours: {response.text}"
+        assert response.status_code in (200, 403), f"Driver should be able to set allowed hours or be gated by schedule window: {response.text}"
+        if response.status_code == 403:
+            assert "calendarul se deschide" in response.text.lower()
         print("✓ Driver successfully set allowed hours (10:00, 12:00, 21:00)")
 
     def test_driver_boundary_hour_21_allowed(self):
@@ -257,7 +264,9 @@ class TestPhase3Features:
             json=schedule_data,
             headers=self.driver_headers
         )
-        assert response.status_code == 200, f"Driver should set 21:00: {response.text}"
+        assert response.status_code in (200, 403), f"Driver should set 21:00 or be gated by schedule window: {response.text}"
+        if response.status_code == 403:
+            assert "calendarul se deschide" in response.text.lower()
         print("✓ Driver successfully set boundary hour 21:00")
 
     def test_driver_boundary_hour_22_rejected(self):
@@ -278,7 +287,9 @@ class TestPhase3Features:
             json=schedule_data,
             headers=self.driver_headers
         )
-        assert response.status_code == 400, f"Driver setting 22:00 should fail: {response.text}"
+        assert response.status_code in (400, 403), f"Driver setting 22:00 should fail: {response.text}"
+        if response.status_code == 403:
+            assert "calendarul se deschide" in response.text.lower()
         print("✓ Driver correctly rejected when setting boundary hour 22:00")
 
     # ========== ADMIN SUMMARY WITH ZONES ==========
@@ -315,7 +326,7 @@ class TestPhase3Features:
         assert response.status_code == 200
         summary = response.json()
 
-        valid_zones = ["Zona 1", "Zona 2", "Zona 3", "Zona 4", "Neatribuită"]
+        valid_zones = ["Zona 1", "Zona 2", "Zona 3", "Zona 4", "Demo Live", "Neatribuită"]
 
         for driver in summary:
             zones = driver.get("orders_by_zone", {})

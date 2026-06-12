@@ -37,3 +37,4 @@ Thread note:
 
 - New Codex threads do not automatically inherit the old conversation about OpenClaw. Read `.ifrim/OPENCLAW.md` to recover the local IfrimDigital OpenClaw agent setup.
 - Live preview is expected for visible app changes. If preview cannot run, explain why and record the blocker.
+- Before implementation, apply the production rule from `AGENTS.md`: do not build demo-only behavior; build real production features with validations, edge cases, error handling, loading states, duplicate-request protection, useful logs, and no broken existing flows.

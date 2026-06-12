@@ -80,6 +80,7 @@ const LoginPage = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (isLoading) return;
     setIsLoading(true);
 
     const result = await login(email, password);
@@ -101,6 +102,7 @@ const LoginPage = () => {
   };
 
   const handleDemoLogin = async (role) => {
+    if (isLoading) return;
     setIsLoading(true);
     const demoAccount = DEMO_CREDENTIALS[role];
 
@@ -151,6 +153,7 @@ const LoginPage = () => {
                 placeholder="Număr de telefon sau mail"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                disabled={isLoading}
                 className="h-16 rounded-2xl border-0 bg-white pl-16 text-base font-semibold shadow-lg placeholder:text-slate-400"
                 required
                 data-testid="email-input"
@@ -164,6 +167,7 @@ const LoginPage = () => {
                 placeholder="Parola"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                disabled={isLoading}
                 className="h-16 rounded-2xl border-0 bg-white pl-16 pr-14 text-base font-semibold shadow-lg placeholder:text-slate-400"
                 required
                 data-testid="password-input"

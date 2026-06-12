@@ -201,8 +201,11 @@ async def update_driver_self_profile(driver_id: str, data: DriverSelfProfileUpda
         raise HTTPException(status_code=400, detail="Emailul este deja folosit de alt cont")
 
     full_name = f"{first_name} {last_name}".strip()
-    email_changed = normalized_email != (driver.get("email") or "")
-    phone_changed = normalized_phone != (driver.get("phone") or "")
+    existing_user = await db.users.find_one({"id": driver.get("user_id")}, {"_id": 0})
+    current_email = driver.get("email") or (existing_user or {}).get("email") or ""
+    current_phone = driver.get("phone") or (existing_user or {}).get("phone") or ""
+    email_changed = normalized_email != current_email
+    phone_changed = normalized_phone != current_phone
     update = {
         "first_name": first_name,
         "last_name": last_name,

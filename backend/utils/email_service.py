@@ -5,6 +5,7 @@ import os
 import resend
 
 logger = logging.getLogger(__name__)
+EMAIL_SEND_TIMEOUT_SECONDS = 12
 
 
 class EmailDeliveryError(RuntimeError):
@@ -28,15 +29,26 @@ def build_driver_verification_html(driver_name: str, code: str) -> str:
 
 
 async def send_driver_verification_email(recipient_email: str, driver_name: str, code: str) -> dict:
-    resend.api_key = os.environ["RESEND_API_KEY"]
+    api_key = os.environ.get("RESEND_API_KEY")
+    sender_email = os.environ.get("SENDER_EMAIL")
+    if not api_key or not sender_email:
+        logger.warning("Driver verification email skipped because Resend is not configured")
+        raise EmailDeliveryError("Serviciul de email nu este configurat", reason="not_configured")
+    resend.api_key = api_key
     params = {
-        "from": os.environ["SENDER_EMAIL"],
+        "from": sender_email,
         "to": [recipient_email],
         "subject": "Cod verificare ProDelivery Bacău",
         "html": build_driver_verification_html(driver_name, code),
     }
     try:
-        return await asyncio.to_thread(resend.Emails.send, params)
+        return await asyncio.wait_for(
+            asyncio.to_thread(resend.Emails.send, params),
+            timeout=EMAIL_SEND_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as exc:
+        logger.exception("Timed out sending driver verification email")
+        raise EmailDeliveryError("Emailul de verificare nu a putut fi trimis la timp", reason="timeout") from exc
     except Exception as exc:
         error_text = str(exc)
         normalized_error = error_text.lower()

@@ -9,6 +9,14 @@ For the full OpenClaw agent roster, paths, and usage notes, read `OPENCLAW.md`. 
 
 For app/frontend work, Codex should start or verify the local preview whenever practical and check the affected route after visible UI changes. Use `PREVIEW.md` for ports and commands. If preview cannot run, report the blocker and record it in project memory.
 
+## Production Implementation Rule
+
+Before any implementation task, read and apply this rule:
+
+Do not implement as a demo. Implement as a real production feature, with validations, edge cases, error handling, loading states, duplicate-request protection, useful logs, and without breaking existing flows.
+
+This applies to Codex, OpenClaw implementation agents, and Claude Code when implementation is explicitly requested.
+
 ## Review Flow
 
 1. `ifrim-reviewer` plans or synthesizes review.

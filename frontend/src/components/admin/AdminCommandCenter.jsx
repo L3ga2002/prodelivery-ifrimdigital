@@ -35,6 +35,7 @@ export const AdminCommandCenter = ({
   activeDriversCount,
   restaurantsCount,
   isSimRunning,
+  actionsDisabled = false,
   onRunSimulation,
   onNewOrder,
 }) => (
@@ -77,7 +78,7 @@ export const AdminCommandCenter = ({
     <div className="mb-5 flex flex-wrap gap-2">
       <Button
         onClick={onRunSimulation}
-        disabled={isSimRunning}
+        disabled={isSimRunning || actionsDisabled}
         className="gap-2 shadow-lg"
         style={{ background: "linear-gradient(135deg, hsl(24 95% 53%), hsl(24 95% 45%))", color: "white" }}
         data-testid="simulate-demo-btn"
@@ -85,7 +86,7 @@ export const AdminCommandCenter = ({
         {isSimRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
         {isSimRunning ? "Simulare în curs..." : "Simulare Demo"}
       </Button>
-      <Button onClick={onNewOrder} data-testid="new-order-btn">
+      <Button onClick={onNewOrder} disabled={actionsDisabled} data-testid="new-order-btn">
         <Plus className="w-4 h-4 mr-2" />
         Comandă Nouă
       </Button>

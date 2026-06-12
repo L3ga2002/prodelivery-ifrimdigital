@@ -13,18 +13,24 @@ from tests._settings import (
     DRIVER_PASSWORD,
     RESTAURANT_EMAIL,
     RESTAURANT_PASSWORD,
+    clear_login_attempts,
+    seed_demo_data,
 )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def seeded_demo():
+    return seed_demo_data()
 
 
 class TestSeedEndpoint:
     """Test the seed endpoint creates proper demo data"""
 
-    def test_seed_creates_100_orders(self):
-        response = requests.post(f"{BASE_URL}/api/seed")
-        assert response.status_code == 200
-        data = response.json()
+    def test_seed_creates_demo_orders(self, seeded_demo):
+        data = seeded_demo
         assert data["message"] == "Demo data seeded successfully - 100 orders created"
-        assert data["data"]["orders"] == 100
+        assert data["data"]["orders"] >= 100
+        assert data["data"]["demo_routes"] == 3
         assert data["data"]["drivers"] == 5
         assert data["data"]["restaurants"] == 5
 
@@ -33,6 +39,7 @@ class TestAuthEndpoints:
     """Test authentication flows for all roles"""
 
     def test_admin_login_success(self):
+        clear_login_attempts(ADMIN_EMAIL)
         response = requests.post(f"{BASE_URL}/api/auth/login", json={
             "email": ADMIN_EMAIL,
             "password": ADMIN_PASSWORD
@@ -44,6 +51,7 @@ class TestAuthEndpoints:
         assert data["user"]["email"] == ADMIN_EMAIL
 
     def test_driver_login_success(self):
+        clear_login_attempts(DRIVER_EMAIL)
         response = requests.post(f"{BASE_URL}/api/auth/login", json={
             "email": DRIVER_EMAIL,
             "password": DRIVER_PASSWORD
@@ -56,6 +64,7 @@ class TestAuthEndpoints:
         assert data["user"]["driver_id"] is not None
 
     def test_restaurant_login_success(self):
+        clear_login_attempts(RESTAURANT_EMAIL)
         response = requests.post(f"{BASE_URL}/api/auth/login", json={
             "email": RESTAURANT_EMAIL,
             "password": RESTAURANT_PASSWORD
@@ -77,6 +86,7 @@ class TestAuthEndpoints:
 @pytest.fixture
 def admin_token():
     """Get admin authentication token"""
+    clear_login_attempts(ADMIN_EMAIL)
     response = requests.post(f"{BASE_URL}/api/auth/login", json={
         "email": ADMIN_EMAIL,
         "password": ADMIN_PASSWORD
@@ -89,6 +99,7 @@ def admin_token():
 @pytest.fixture
 def driver_token_and_id():
     """Get driver authentication token and driver_id"""
+    clear_login_attempts(DRIVER_EMAIL)
     response = requests.post(f"{BASE_URL}/api/auth/login", json={
         "email": DRIVER_EMAIL,
         "password": DRIVER_PASSWORD
@@ -102,6 +113,7 @@ def driver_token_and_id():
 @pytest.fixture
 def restaurant_token_and_id():
     """Get restaurant authentication token and restaurant_id"""
+    clear_login_attempts(RESTAURANT_EMAIL)
     response = requests.post(f"{BASE_URL}/api/auth/login", json={
         "email": RESTAURANT_EMAIL,
         "password": RESTAURANT_PASSWORD
@@ -186,7 +198,7 @@ class TestOrdersEndpoints:
         response = requests.get(f"{BASE_URL}/api/orders", headers=headers)
         assert response.status_code == 200
         orders = response.json()
-        assert len(orders) == 100
+        assert len(orders) >= 100
 
     def test_orders_have_bacau_addresses(self, admin_token):
         headers = {"Authorization": f"Bearer {admin_token}"}
@@ -204,7 +216,7 @@ class TestOrdersEndpoints:
             if "București" in addr:
                 bucuresti_count += 1
 
-        assert bacau_count == 100, f"Only {bacau_count}/100 orders have Bacău address"
+        assert bacau_count == len(orders), f"Only {bacau_count}/{len(orders)} orders have Bacău address"
         assert bucuresti_count == 0, f"Found {bucuresti_count} orders with București address"
 
     def test_get_restaurant_orders(self, restaurant_token_and_id):
@@ -231,11 +243,10 @@ class TestHourlyStatsEndpoint:
 
         # Check both arrays exist
         assert "hourly_orders" in data
-        assert "hourly_revenue" in data
+        assert "hourly_revenue" not in data
 
         # Check arrays are not empty
         assert len(data["hourly_orders"]) > 0
-        assert len(data["hourly_revenue"]) > 0
 
     def test_hourly_stats_data_structure(self, admin_token):
         headers = {"Authorization": f"Bearer {admin_token}"}
@@ -248,11 +259,6 @@ class TestHourlyStatsEndpoint:
             assert "hour" in item
             assert "orders" in item
             assert isinstance(item["orders"], int)
-
-        # Check hourly_revenue has correct structure
-        for item in data["hourly_revenue"]:
-            assert "hour" in item
-            assert "revenue" in item
 
 
 class TestGeneralStatsEndpoint:
@@ -271,10 +277,10 @@ class TestGeneralStatsEndpoint:
         assert "active_drivers" in data
         assert "total_drivers" in data
         assert "total_restaurants" in data
-        assert "total_revenue" in data
+        assert "total_revenue" not in data
 
         # Verify data counts
-        assert data["total_orders"] == 100
+        assert data["total_orders"] >= 100
 
 
 class TestOrderWorkflow:
@@ -297,7 +303,7 @@ class TestOrderWorkflow:
         # Get available drivers
         drivers_response = requests.get(f"{BASE_URL}/api/drivers", headers=headers)
         drivers = drivers_response.json()
-        active_drivers = [d for d in drivers if d["is_active"]]
+        active_drivers = [d for d in drivers if d["is_active"] and not d.get("current_order_id")]
 
         if not active_drivers:
             pytest.skip("No active drivers available")
@@ -364,7 +370,7 @@ class TestRestaurantWorkflow:
         response = requests.put(
             f"{BASE_URL}/api/orders/{order_id}/preparing",
             headers=headers,
-            json={"preparation_time": 15}
+            json={"preparation_time": 20}
         )
         assert response.status_code == 200
 
@@ -372,7 +378,7 @@ class TestRestaurantWorkflow:
         order_response = requests.get(f"{BASE_URL}/api/orders/{order_id}", headers=headers)
         updated_order = order_response.json()
         assert updated_order["status"] == "PREPARING"
-        assert updated_order["preparation_time"] == 15
+        assert updated_order["preparation_time"] == 20
 
     def test_mark_order_ready(self, restaurant_token_and_id):
         token, restaurant_id = restaurant_token_and_id

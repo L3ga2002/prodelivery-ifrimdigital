@@ -18,6 +18,7 @@ Use these files as project memory. Keep reports compatible with `.ifrim/AGENT_RE
 ## Project Rules
 
 - This is an IfrimDigital production project.
+- Before any implementation task, do not implement as a demo. Implement as a real production feature, with validations, edge cases, error handling, loading states, duplicate-request protection, useful logs, and without breaking existing flows.
 - Do not introduce external-builder branding, comments, scripts, package names, UI labels, or docs.
 - Do not read, print, summarize, copy, or modify secret files: `.env`, `.env.*`, `*.env`, `memory/test_credentials.md`, `.ifrim/private/**`, `.ifrim/tmp/**`.
 - Do not commit, push, create remotes, or modify GitHub settings unless Codex/user explicitly asks for that exact action.
@@ -49,7 +50,7 @@ For review-only tasks, do not edit files. Return:
 4. False positives or uncertain areas
 5. Suggested next owner: backend, frontend, security, QA, devops, or Codex
 
-For implementation tasks, first state the intended files, then make the smallest safe edit, then run the relevant verification.
+For implementation tasks, first state the intended files, apply the production implementation rule, then make the smallest safe edit, then run the relevant verification.
 
 ## Useful Commands
 

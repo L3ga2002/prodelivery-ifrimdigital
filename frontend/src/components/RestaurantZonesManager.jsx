@@ -19,6 +19,7 @@ import { MapContainer, Marker, Polygon, Popup, TileLayer, useMap, useMapEvents }
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { CornerDownLeft, MapPinned, Pencil, Plus, RotateCcw, Save, Trash2, Undo2, X } from "lucide-react";
+import { getApiErrorMessage, normalizeArray, retryApiCall } from "../lib/api";
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 
@@ -179,6 +180,8 @@ export function RestaurantZonesManager({ restaurant, onZonesChange }) {
   const [draftPolygon, setDraftPolygon] = useState(null);
   const [selectedZone, setSelectedZone] = useState(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [isSavingZone, setIsSavingZone] = useState(false);
+  const [deletingZoneId, setDeletingZoneId] = useState(null);
   const [protectedAction, setProtectedAction] = useState(null);
   const [protectionText, setProtectionText] = useState("");
   const [form, setForm] = useState({ name: "", fee: 10, color: ZONE_COLORS[0], is_active: true });
@@ -189,11 +192,12 @@ export function RestaurantZonesManager({ restaurant, onZonesChange }) {
     if (!restaurant?.id) return;
     setLoading(true);
     try {
-      const response = await axios.get(`${API_URL}/api/zones`, { params: { restaurant_id: restaurant.id } });
-      setZones(response.data || []);
-      onZonesChange?.(response.data || []);
-    } catch {
-      toast.error("Nu am putut încărca zonele restaurantului");
+      const response = await retryApiCall(() => axios.get(`${API_URL}/api/zones`, { params: { restaurant_id: restaurant.id } }));
+      const nextZones = normalizeArray(response.data);
+      setZones(nextZones);
+      onZonesChange?.(nextZones);
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Nu am putut încărca zonele restaurantului"));
     } finally {
       setLoading(false);
     }
@@ -250,6 +254,7 @@ export function RestaurantZonesManager({ restaurant, onZonesChange }) {
   };
 
   const saveZone = async (confirmed = false) => {
+    if (isSavingZone) return;
     if (!form.name.trim()) {
       toast.error("Numele zonei este obligatoriu");
       return;
@@ -258,13 +263,14 @@ export function RestaurantZonesManager({ restaurant, onZonesChange }) {
       toast.error("Prețul trebuie să fie pozitiv");
       return;
     }
+    if (selectedZone && selectedZone.is_locked !== false && !confirmed) {
+      setProtectedAction({ type: "save", zone: selectedZone });
+      setProtectionText("");
+      return;
+    }
+    setIsSavingZone(true);
     try {
       if (selectedZone) {
-        if (selectedZone.is_locked !== false && !confirmed) {
-          setProtectedAction({ type: "save", zone: selectedZone });
-          setProtectionText("");
-          return;
-        }
         await axios.put(`${API_URL}/api/zones/${selectedZone.id}`, {
           name: form.name.trim(),
           fee: Number(form.fee),
@@ -300,25 +306,31 @@ export function RestaurantZonesManager({ restaurant, onZonesChange }) {
       setDialogOpen(false);
       setDraftPolygon(null);
       setSelectedZone(null);
-      fetchZones();
-    } catch {
-      toast.error("Eroare la salvarea zonei");
+      await fetchZones();
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Eroare la salvarea zonei"));
+    } finally {
+      setIsSavingZone(false);
     }
   };
 
   const deleteZone = async (zone, confirmed = false) => {
+    if (deletingZoneId) return;
     if (zone.is_locked !== false && !confirmed) {
       setProtectedAction({ type: "delete", zone });
       setProtectionText("");
       return;
     }
+    setDeletingZoneId(zone.id);
     try {
       await axios.delete(`${API_URL}/api/zones/${zone.id}`, { params: { confirm_protected_action: confirmed } });
       toast.success("Zona a fost ștearsă");
       if (selectedZone?.id === zone.id) setSelectedZone(null);
-      fetchZones();
-    } catch {
-      toast.error("Eroare la ștergerea zonei");
+      await fetchZones();
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Eroare la ștergerea zonei"));
+    } finally {
+      setDeletingZoneId(null);
     }
   };
 
@@ -375,7 +387,7 @@ export function RestaurantZonesManager({ restaurant, onZonesChange }) {
                   </Button>
                 </>
               ) : (
-                <Button type="button" size="sm" onClick={startDrawing} data-testid="restaurant-draw-zone-button">
+                <Button type="button" size="sm" onClick={startDrawing} disabled={isSavingZone || deletingZoneId !== null} data-testid="restaurant-draw-zone-button">
                   <Plus className="mr-1 h-4 w-4" />
                   Zonă nouă
                 </Button>
@@ -453,6 +465,7 @@ export function RestaurantZonesManager({ restaurant, onZonesChange }) {
                         type="button"
                         variant="outline"
                         size="sm"
+                        disabled={isSavingZone || deletingZoneId !== null}
                         onClick={() => openEditDialog(zone)}
                         data-testid={`restaurant-zone-edit-button-${zone.id}`}
                       >
@@ -463,6 +476,7 @@ export function RestaurantZonesManager({ restaurant, onZonesChange }) {
                         type="button"
                         variant="outline"
                         size="sm"
+                        disabled={isSavingZone || deletingZoneId !== null}
                         onClick={() => {
                           startRedraw(zone);
                         }}
@@ -476,6 +490,7 @@ export function RestaurantZonesManager({ restaurant, onZonesChange }) {
                         variant="outline"
                         size="sm"
                         className="text-slate-600 hover:text-red-700"
+                        disabled={isSavingZone || deletingZoneId === zone.id}
                         onClick={() => deleteZone(zone)}
                         data-testid={`restaurant-zone-delete-button-${zone.id}`}
                       >
@@ -544,18 +559,18 @@ export function RestaurantZonesManager({ restaurant, onZonesChange }) {
             </div>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setDialogOpen(false)} data-testid="restaurant-zone-dialog-cancel-button">
+            <Button type="button" variant="outline" onClick={() => setDialogOpen(false)} disabled={isSavingZone} data-testid="restaurant-zone-dialog-cancel-button">
               Anulează
             </Button>
             {selectedZone && (
-              <Button type="button" variant="outline" onClick={() => startRedraw()} data-testid="restaurant-zone-dialog-redraw-button">
+              <Button type="button" variant="outline" onClick={() => startRedraw()} disabled={isSavingZone} data-testid="restaurant-zone-dialog-redraw-button">
                 <RotateCcw className="mr-1 h-4 w-4" />
                 Redesenează
               </Button>
             )}
-            <Button type="button" onClick={saveZone} data-testid="restaurant-zone-save-button">
+            <Button type="button" onClick={saveZone} disabled={isSavingZone} data-testid="restaurant-zone-save-button">
               <Save className="mr-1 h-4 w-4" />
-              Salvează
+              {isSavingZone ? "Se salvează..." : "Salvează"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -587,7 +602,7 @@ export function RestaurantZonesManager({ restaurant, onZonesChange }) {
             <Button
               type="button"
               variant={protectedAction?.type === "delete" ? "destructive" : "default"}
-              disabled={protectionText !== "CONFIRM"}
+              disabled={protectionText !== "CONFIRM" || isSavingZone || deletingZoneId !== null}
               onClick={() => {
                 const action = protectedAction;
                 setProtectedAction(null);

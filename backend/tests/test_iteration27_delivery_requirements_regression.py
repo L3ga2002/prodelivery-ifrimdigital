@@ -68,6 +68,29 @@ def _build_order_payload(restaurant_id: str, suffix: str) -> dict:
     }
 
 
+def _deliver_order(admin_session: requests.Session, order_id: str) -> None:
+    drivers_response = admin_session.get(f"{BASE_URL}/api/drivers", timeout=25)
+    assert drivers_response.status_code == 200, drivers_response.text
+    driver = next((item for item in drivers_response.json() if not item.get("current_order_id") and not item.get("account_disabled")), None)
+    if not driver:
+        pytest.skip("No available driver for problem-order delivery setup")
+
+    assign = admin_session.put(
+        f"{BASE_URL}/api/orders/{order_id}/assign",
+        json={"driver_id": driver["id"]},
+        timeout=25,
+    )
+    assert assign.status_code == 200, assign.text
+
+    for status in ["ACCEPTED", "PICKED_UP", "DELIVERED"]:
+        response = admin_session.put(
+            f"{BASE_URL}/api/orders/{order_id}/status",
+            json={"status": status},
+            timeout=25,
+        )
+        assert response.status_code == 200, response.text
+
+
 def test_restaurant_analytics_access_and_shape(restaurant_session: requests.Session):
     # Restaurant analytics module: role restaurant can access own analytics endpoint.
     rid = _restaurant_id(restaurant_session)
@@ -121,6 +144,13 @@ def test_problem_order_creates_linked_followup_and_marks_original(
 ):
     # Orders problem module: POST /problem creates linked order and marks original.
     rid = _restaurant_id(restaurant_session)
+    status_response = restaurant_session.patch(
+        f"{BASE_URL}/api/restaurants/{rid}/status",
+        json={"accepting_orders": True},
+        timeout=25,
+    )
+    assert status_response.status_code == 200, status_response.text
+
     suffix = uuid.uuid4().hex[:8]
     create_order = admin_session.post(
         f"{BASE_URL}/api/orders",
@@ -130,6 +160,7 @@ def test_problem_order_creates_linked_followup_and_marks_original(
     assert create_order.status_code == 200, create_order.text
     original = create_order.json()
     original_id = original["id"]
+    _deliver_order(admin_session, original_id)
 
     problem_response = restaurant_session.post(
         f"{BASE_URL}/api/orders/{original_id}/problem",
@@ -188,7 +219,7 @@ def test_disable_driver_blocks_when_active_order_exists(admin_session: requests.
     drivers_response = admin_session.get(f"{BASE_URL}/api/drivers", timeout=25)
     assert drivers_response.status_code == 200
     drivers = drivers_response.json()
-    target_driver = next((d for d in drivers if d.get("id") == "driver-001"), None) or drivers[0]
+    target_driver = next((d for d in drivers if d.get("is_active") and not d.get("current_order_id")), None)
     assert target_driver is not None
 
     create_order = admin_session.post(

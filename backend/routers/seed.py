@@ -14,6 +14,15 @@ SYSTEM_RANDOM = secrets.SystemRandom()
 
 
 def _ensure_seed_allowed(current_user: dict) -> None:
+    environment = (
+        os.environ.get("APP_ENV")
+        or os.environ.get("ENVIRONMENT")
+        or os.environ.get("ENV")
+        or os.environ.get("FASTAPI_ENV")
+        or ""
+    ).strip().lower()
+    if environment in {"prod", "production"}:
+        raise HTTPException(status_code=403, detail="Seed endpoint is disabled in production")
     if os.environ.get("ALLOW_SEED", "").strip().lower() != "true":
         raise HTTPException(status_code=403, detail="Seed endpoint is disabled")
     if current_user.get("role") != "admin":
@@ -200,6 +209,8 @@ async def clear_demo_collections() -> None:
     await db.emergency_slots.delete_many({})
     await db.schedules.delete_many({})
     await db.delivery_zones.delete_many({})
+    await db.login_attempts.delete_many({})
+    await db.registration_attempts.delete_many({})
 
 
 async def seed_admin_account(demo_credentials: dict) -> None:
@@ -276,6 +287,7 @@ async def seed_delivery_zones(restaurants_data: list[dict]) -> None:
                 "fee": 10.0 if zone_level == 1 else 18.0,
                 "is_active": True,
                 "sort_order": sort_order,
+                "is_locked": True,
                 "polygon": build_restaurant_zone_polygon(restaurant_seed["latitude"], restaurant_seed["longitude"], radius),
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),

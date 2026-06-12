@@ -57,22 +57,34 @@ const webpackConfig = {
 };
 
 webpackConfig.devServer = (devServerConfig) => {
-  // Add health check endpoints if enabled
-  if (config.enableHealthCheck && setupHealthEndpoints && healthPluginInstance) {
-    const originalSetupMiddlewares = devServerConfig.setupMiddlewares;
+  devServerConfig.historyApiFallback = {
+    ...(typeof devServerConfig.historyApiFallback === "object" ? devServerConfig.historyApiFallback : {}),
+    disableDotRule: true,
+    htmlAcceptHeaders: ["text/html", "application/xhtml+xml", "*/*"],
+  };
 
-    devServerConfig.setupMiddlewares = (middlewares, devServer) => {
-      // Call original setup if exists
-      if (originalSetupMiddlewares) {
-        middlewares = originalSetupMiddlewares(middlewares, devServer);
-      }
+  const originalSetupMiddlewares = devServerConfig.setupMiddlewares;
+  devServerConfig.setupMiddlewares = (middlewares, devServer) => {
+    middlewares.unshift({
+      name: "spa-navigation-fallback",
+      middleware: (req, _res, next) => {
+        if (req.method === "GET" && !req.headers.accept && !req.path.includes(".")) {
+          req.headers.accept = "text/html";
+        }
+        next();
+      },
+    });
 
-      // Setup health endpoints
+    if (originalSetupMiddlewares) {
+      middlewares = originalSetupMiddlewares(middlewares, devServer);
+    }
+
+    if (config.enableHealthCheck && setupHealthEndpoints && healthPluginInstance) {
       setupHealthEndpoints(devServer, healthPluginInstance);
+    }
 
-      return middlewares;
-    };
-  }
+    return middlewares;
+  };
 
   return devServerConfig;
 };

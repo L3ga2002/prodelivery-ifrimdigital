@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime
+from pymongo import ReturnDocument
 from database import db
 from auth import get_current_user
 from models.emergency_slot import EmergencySlotCreate, EmergencySlot
@@ -173,7 +174,7 @@ async def _load_claim_context(slot_id: str, current_user: dict) -> tuple[dict, d
     return slot, driver, schedule
 
 
-async def _attach_emergency_slot_to_schedule(driver: dict, slot: dict, schedule: dict | None) -> None:
+async def _attach_emergency_slot_to_schedule(driver: dict, slot: dict, schedule: dict | None) -> bool:
     end_h = (int(slot["hour"].split(":")[0]) + 1) % 24
     emergency_slot_data = {
         "start": slot["hour"],
@@ -183,11 +184,15 @@ async def _attach_emergency_slot_to_schedule(driver: dict, slot: dict, schedule:
 
     if schedule:
         day_key = f"slots.{slot['day']}"
-        await db.schedules.update_one(
-            {"driver_id": driver["id"], "week_start": slot["week_start"]},
+        result = await db.schedules.update_one(
+            {
+                "driver_id": driver["id"],
+                "week_start": slot["week_start"],
+                f"{day_key}.start": {"$ne": slot["hour"]},
+            },
             {"$push": {day_key: emergency_slot_data}, "$inc": {"total_hours": 1}}
         )
-        return
+        return result.modified_count == 1
 
     from models.schedule import Schedule
 
@@ -198,6 +203,20 @@ async def _attach_emergency_slot_to_schedule(driver: dict, slot: dict, schedule:
         total_hours=1.0
     )
     await db.schedules.insert_one(new_schedule.model_dump())
+    return True
+
+
+async def _rollback_emergency_slot_claim(slot_id: str, driver: dict) -> None:
+    await db.emergency_slots.update_one(
+        {"id": slot_id, "claimed_by": driver["id"]},
+        {
+            "$pull": {
+                "claimed_by": driver["id"],
+                "claimed_names": driver["name"],
+            },
+            "$inc": {"remaining_spots": 1},
+        },
+    )
 
 
 @router.post("")
@@ -361,22 +380,41 @@ async def claim_emergency_slot(slot_id: str, current_user: dict = Depends(get_cu
 
     slot, driver, schedule = await _load_claim_context(slot_id, current_user)
 
-    await db.emergency_slots.update_one(
-        {"id": slot_id},
+    claimed_slot = await db.emergency_slots.find_one_and_update(
+        {
+            "id": slot_id,
+            "remaining_spots": {"$gt": 0},
+            "claimed_by": {"$ne": driver["id"]},
+        },
         {
             "$push": {
                 "claimed_by": driver["id"],
                 "claimed_names": driver["name"]
             },
             "$inc": {"remaining_spots": -1}
-        }
+        },
+        return_document=ReturnDocument.AFTER,
+        projection={"_id": 0},
     )
 
-    await _attach_emergency_slot_to_schedule(driver, slot, schedule)
+    if not claimed_slot:
+        current_slot = await db.emergency_slots.find_one({"id": slot_id}, {"_id": 0})
+        if not current_slot:
+            raise HTTPException(status_code=404, detail="Slot negăsit")
+        if driver["id"] in current_slot.get("claimed_by", []):
+            raise HTTPException(status_code=400, detail="Ai luat deja acest slot")
+        if current_slot.get("remaining_spots", 0) <= 0:
+            raise HTTPException(status_code=400, detail="Nu mai sunt locuri disponibile")
+        raise HTTPException(status_code=409, detail="Slotul a fost modificat. Reîncarcă și încearcă din nou.")
+
+    attached = await _attach_emergency_slot_to_schedule(driver, claimed_slot, schedule)
+    if not attached:
+        await _rollback_emergency_slot_claim(slot_id, driver)
+        raise HTTPException(status_code=400, detail="Ai deja program la această oră")
 
     return {
-        "message": f"Slot de urgență luat! Rămân {slot['remaining_spots'] - 1} locuri",
-        "remaining_spots": slot["remaining_spots"] - 1
+        "message": f"Slot de urgență luat! Rămân {claimed_slot['remaining_spots']} locuri",
+        "remaining_spots": claimed_slot["remaining_spots"]
     }
 
 
