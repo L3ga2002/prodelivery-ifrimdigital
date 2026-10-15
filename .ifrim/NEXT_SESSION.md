@@ -1,3 +1,16 @@
+# Campania 15 octombrie închisă — C pregătit, neaplicat
+
+Punctul de intrare este LOOP_REPORTS/2026-10-15-campaign-close.md. Loturile A/B și D/F/H sunt commit/push b3c6921 și0b8390d, confirmate pe origin privat. Raportul G/B2T/AS și această închidere intră în commitul final. Codul produsului rămâne baza2fc239d:322 fișiere identice,140 intrări/76 căi protejate intacte. Nu prezenta regresia144=135PASS/9FAIL ca verde.
+
+G și supliment: patru lacune acoperite cumulativ,41 verificări QA; FAIL-urile de harness sunt păstrate. B2T Brave: un singur POST/credit, zero cereri ale tabuluiB către operația țintă,33 verificări QA și32 reviewer. Defect P2 real: BUSY rezidual lângă receipt terminal în tabulB. AS: răspuns A200 autentic încheiat după loginB, fără contaminare sau mutații; captura stabilă finală este AS-05-B-STABLE, iar AS-04 este păstrată cu limita vizuală documentată. D HTTP/restart:58 verificări PASS. F:224 teste pure PASS, cu încercările anterioare păstrate. H: audit/prep, fără implementare OCR/inbox/furnizor.
+
+Următorul lot C: implementation/c-busy/HANDOFF.md din QA_RUNS/2026-10-15-l6a-campaign/closed-g-b2t, respectiv originalul din workspace-ul pd-l6a-20261015-campaign. Corecția NU este aplicată. Regresie nouă externă: 21 = 15 PASS / 6 FAIL așteptate; patch read()-only acceptat static. Necesită test permanent nou, green pe aceleași 21 cazuri, subset STRICTMODE explicit de 12 cazuri (nu suită completă), manifest/build noi și două taburi Brave pe candidat. Protejează erorile non-BUSY și BUSY legitim pentru ACK deja-terminal. Nu rescrie testele protejate și nu reutiliza buildul vechi pentru candidat.
+
+Toate API-urile/Brave și Mongo propriu27961/PID10604 sunt oprite verificat; zero procese QA și porturile58121/27961 închise. Bazele și fișierele sunt păstrate. La reluare verifică din nou ownership și manifestele înainte de pornire. Nu folosi date/configuri reale, deploymenturi, servicii plătite sau activări financiare. Gate-uri: L4B noile13/14, L5C2 traseu/zone/tarif/rotunjire, furnizor și probe fizice. E1/E2/L6 general rămân deschise.
+
+Arhivă finală: 252 artefacte; manifest SHA256 440c34bcbd473c643f2172f730a49b34d937484c34e903cae456ca0c52f80a88. Ultima cotă live înainte de închiderea documentară:9% disponibil; ținta rezervă aproximativ6%, fără reset de cotă și fără consum artificial. Nu rula Git prune/cleanup pentru avertismentul looseobjects.
+
+---
 # D HTTP/restart, F și H salvate — 15 octombrie 2026
 
 D1–D4 PASS la prima execuție,58 verificări independente:3 curse HTTP cu suprapunere măsurată și un singur efect, apoi restart proces real/reutilizare fixture și4 GET terminale fără reluare POST. F:224 teste pure PASS în R4; R1/R2 harnessfail și R3TIMEOUT rămân păstrate. Cele9FAIL protejate statusRecovery rămân FAIL. H:audit/prep OCR/API închis documentar; I01/I02 neimplementate, I03 blocat furnizor. Niciun cod sau test de produs modificat.
