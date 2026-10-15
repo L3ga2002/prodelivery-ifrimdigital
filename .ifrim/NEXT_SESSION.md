@@ -1,3 +1,14 @@
+# D HTTP/restart, F și H salvate — 15 octombrie 2026
+
+D1–D4 PASS la prima execuție,58 verificări independente:3 curse HTTP cu suprapunere măsurată și un singur efect, apoi restart proces real/reutilizare fixture și4 GET terminale fără reluare POST. F:224 teste pure PASS în R4; R1/R2 harnessfail și R3TIMEOUT rămân păstrate. Cele9FAIL protejate statusRecovery rămân FAIL. H:audit/prep OCR/API închis documentar; I01/I02 neimplementate, I03 blocat furnizor. Niciun cod sau test de produs modificat.
+
+Raport: LOOP_REPORTS/2026-10-15-d-concurrency-f-contracts-h-intake.md. Arhivă: QA_RUNS/2026-10-15-l6a-campaign/closed-dfh. L6A anterior a fost commit/push b3c6921c1bff58349b621c0cea4d367dde31fec8 către originprivat, hashremoteconfirmat. Baza322 rămâne identică cu2fc239d. Nu rula prune/cleanup la avertismentul Git despre looseobjects fărăscopautorizat.
+
+Campania continuă: G restaurant Brave este executat, auditul independent în curs; erorile harness păstrate, efectele finale3comenzi/counter103 reconciliate. B2T două taburi este pregătit/reviewat, încă neexecutat la acest checkpoint; namespace nou gol ed3b8886f11e4a73b42fe63dc5786422, API58121 șiMongo27961 proprii active, verificăhealth/CIM/manifesteînainte. API-urile L6A/D/G și BraveG au fost închise verificat, datele păstrate. Nu confunda D TCP cu douătaburi sau account-switch.
+
+Ultima cotă live40%disponibil, țintăaproximativ6%rezervă fărăconsumartificial. Etapele1/2/L6 general DESCHISE, L4B noile13/14/L5C2 traseu-zone-tarif-rotunjire/probe fizice/E4gatefurnizor separate. Continuă numai loturi utile autorizate, cu checkpoint/commit/push; fără deployment/date reale/paid/activare financiară/telefon sau algoritm10comenzi.
+
+---
 # L6A verificat și salvat — 15 octombrie 2026
 
 Reconcilierea A și lotul B sunt închise ca probe delimitate pe sursa curentă. E1/E2/L6 general rămân DESCHISE. Nicio modificare de produs/test protejat: 322 surse și 140/76 protecții intacte. HTTP real/auth/Mongo: R1 11PASS/1FAIL de așteptare greșită S10; supliment separat șase refuzuri PASS. Cele8 comenzi pozitive, contor108, custodie600,276764sec, refacere unică, close-day și banii necunoscuți sunt reconciliate independent. Regresie144=135PASS/9FAIL păstrate, build0/0; Brave real inclusiv două refuzuri client fără POST și fără pierderea intenției.
