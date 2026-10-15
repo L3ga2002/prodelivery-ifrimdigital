@@ -1,3 +1,16 @@
+# L6A verificat și salvat — 15 octombrie 2026
+
+Reconcilierea A și lotul B sunt închise ca probe delimitate pe sursa curentă. E1/E2/L6 general rămân DESCHISE. Nicio modificare de produs/test protejat: 322 surse și 140/76 protecții intacte. HTTP real/auth/Mongo: R1 11PASS/1FAIL de așteptare greșită S10; supliment separat șase refuzuri PASS. Cele8 comenzi pozitive, contor108, custodie600,276764sec, refacere unică, close-day și banii necunoscuți sunt reconciliate independent. Regresie144=135PASS/9FAIL păstrate, build0/0; Brave real inclusiv două refuzuri client fără POST și fără pierderea intenției.
+
+Raport: LOOP_REPORTS/2026-10-15-l6a-current-source-final.md. Arhivă locală cu hashuri: QA_RUNS/2026-10-15-l6a-campaign/closed-ab-r2. W: C:\Users\mihai\OneDrive\Documente\Mutare Proiecte de pe Emergent\pd-l6a-20261015-campaign. Nu confunda viewportul cu telefonul sau reload cu BFCache. 9FAIL protejate rămân vizibile; L6 nu este global verde.
+
+Campania autorizată continuă cu D: concurență HTTP și restart real, în namespace nou. Harnessul D R1 necesită corecții de măsurare înainte de execuție; nu reprezintă defect produs. Două taburi și schimbarea contului în curs rămân probe separate. C/E: numai defecte/refactor justificate. F/G/H: acceptare, E3 restaurant și pregătire E4 în limita cotei utile. Ultima citire:55%disponibil; țintă rezerva aproximativ6%, recitește live. Utilizatorul a autorizat commit/push pentru loturile închise către origin privat; restricțiile istorice fără Git sunt supersedate pentru această campanie. Fără deployment/date reale/paid/telefon/activare financiară.
+
+L4B13/14NOI și L5C2 traseu/zone/tarif/rotunjire sunt gate-uri distincte; cele18răspunsuri vechi sunt primite, Q7clarificat nu stabilește autoritatea încasării. E4 furnizor separat. A0–A8 și D0 nu se reconstruiesc. Sesiunea Brave L6A și API58121 au fost închise cu ownership verificat; Mongo27961 este activ; verifică manifestele/CIM actuale înainte de administrare, nu folosi PID istoric. Datele sintetice sunt păstrate, old27953 nu a fost atins.
+
+---
+Istoricul anterior se păstrează integral.
+
 # S1 închis local — 15 octombrie 2026
 
 S1, F3B și P1 sunt integrate local, cu review/QA și post-integration independente. Etapele1/2 și acceptarea L6 rămân DESCHISE. S1:1produs+1testnou,55owner/47reviewAstra/69QA PASS; protejate81PASS/8FAIL→80PASS/9FAIL cu exact conflictul driverCANCELLED bodyless resume păstrat;89matched/88identical, fără editarea testelor originale. Backup și hashuri salvate, baseline319/nonscope318/stage320/protected14076/prior12/6/13/13 intacte.
