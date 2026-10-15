@@ -1,5 +1,9 @@
 # GitHub Plan
 
+## Checkpoint autorizat — 2026-10-15
+
+Cătălin a cerut explicit commit și push pentru starea curentă. Destinația existentă a fost verificată: `L3ga2002/prodelivery-ifrimdigital`, privată, ramura implicită `main`. Autorizația acestui checkpoint înlocuiește restricția istorică fără Git pentru această operație. Include codul, testele, sursele mobile și documentația; regulile `.gitignore` păstrează local arhivele brute QA, bazele temporare, buildurile și secretele. Detalii: `CHECKPOINTS/2026-10-15-git-checkpoint.md`. Publicarea aplicației și acceptarea comercială au propriile etape.
+
 ## Rule
 
 ProDelivery work done with Codex/OpenClaw must use a new dedicated GitHub repository. Do not push to, overwrite, fork into, or reuse Catalin's existing repositories unless he explicitly asks.

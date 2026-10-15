@@ -8,6 +8,7 @@ from models.user import User
 from models.driver import Driver
 from models.restaurant import Restaurant
 from models.order import Order
+from utils.order_revision import ensure_legacy_order_scope, require_isolated_maintenance
 
 router = APIRouter(tags=["seed"])
 SYSTEM_RANDOM = secrets.SystemRandom()
@@ -82,6 +83,8 @@ def build_restaurant_zone_polygon(lat: float, lng: float, radius: float) -> list
 
 
 async def seed_demo_orders(drivers_data: list[dict]) -> int:
+    require_isolated_maintenance(db)
+    await ensure_legacy_order_scope(db)
     first_names = ["Alexandru", "Maria", "Ion", "Elena", "Andrei", "Ana", "Mihai", "Cristina", "Bogdan", "Diana",
                    "Vlad", "Ioana", "George", "Raluca", "Dan", "Adriana", "Florin", "Simona", "Radu", "Laura",
                    "Stefan", "Gabriela", "Marius", "Alina", "Cosmin", "Monica", "Adrian", "Daniela", "Ciprian", "Roxana"]
@@ -120,6 +123,8 @@ async def seed_demo_orders(drivers_data: list[dict]) -> int:
 
 
 async def seed_demo_map_routes() -> int:
+    require_isolated_maintenance(db)
+    await ensure_legacy_order_scope(db)
     route_orders = [
         {
             "id": "demo-route-001",
@@ -174,7 +179,10 @@ async def seed_demo_map_routes() -> int:
         },
     ]
     now = datetime.now(timezone.utc).isoformat()
-    await db.orders.delete_many({"id": {"$in": [order["id"] for order in route_orders]}})
+    await db.orders.delete_many({
+        "id": {"$in": [order["id"] for order in route_orders]},
+        "order_version": {"$exists": False},
+    })
     for order in route_orders:
         await db.orders.insert_one({
             **order,
@@ -202,10 +210,12 @@ async def seed_demo_map_routes() -> int:
 
 
 async def clear_demo_collections() -> None:
+    require_isolated_maintenance(db)
+    await ensure_legacy_order_scope(db)
     await db.users.delete_many({"role": {"$ne": "admin"}})
     await db.drivers.delete_many({})
     await db.restaurants.delete_many({})
-    await db.orders.delete_many({})
+    await db.orders.delete_many({"order_version": {"$exists": False}})
     await db.emergency_slots.delete_many({})
     await db.schedules.delete_many({})
     await db.delivery_zones.delete_many({})
@@ -532,6 +542,8 @@ SECTOR_MAPS = [
 @router.post("/seed")
 async def seed_data(current_user: dict = Depends(get_current_user)):
     _ensure_seed_allowed(current_user)
+    require_isolated_maintenance(db)
+    await ensure_legacy_order_scope(db)
     demo_credentials = _get_demo_credentials()
     driver_email_map = {
         "driver-001": demo_credentials["driver_1"]["email"],

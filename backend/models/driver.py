@@ -33,6 +33,8 @@ class Driver(BaseModel):
     current_order_id: Optional[str] = None
     total_deliveries: int = 0
     total_earnings: float = 0
+    # New-protocol earnings only; historical floating aggregates are not migrated.
+    financial_earned_bani: int = Field(default=0, strict=True, ge=0, le=9000000000000000)
     punctuality_rate: float = 0.85
     manual_ranking_score: Optional[float] = None
     manual_rank_note: Optional[str] = None

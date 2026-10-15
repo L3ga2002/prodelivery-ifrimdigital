@@ -1,0 +1,238 @@
+{
+  "schema": "prodelivery.campaign.l1.independent-documentary-qa.v1",
+  "utc": "2026-10-13T03:12:48.4084215Z",
+  "reviewer": "campaign_mobile",
+  "independentOfAuthor": true,
+  "verdict": "PASS_DOCUMENTARY_SCOPE",
+  "findings": [],
+  "sourceHashChecks": [
+    {
+      "path": ".ifrim/NEXT_SESSION.md",
+      "expected": "8DBE74630D07E34B579177E3528FBD93F934465ED054A0D259F4183A6A6B990C",
+      "actual": "8DBE74630D07E34B579177E3528FBD93F934465ED054A0D259F4183A6A6B990C",
+      "match": true
+    },
+    {
+      "path": ".ifrim/AGENTS.md",
+      "expected": "8B986D75F3B44188C610E5D2F8A2131F5FB516141DEB9F4B2A3D1F287C0FA2AE",
+      "actual": "8B986D75F3B44188C610E5D2F8A2131F5FB516141DEB9F4B2A3D1F287C0FA2AE",
+      "match": true
+    },
+    {
+      "path": ".ifrim/EXECUTION_PLAN_2026-09-26.md",
+      "expected": "E6DFE53423249670A5FBB8118AC3991F39D5E3C7682DFF59526A0AEEF2CA9DD9",
+      "actual": "E6DFE53423249670A5FBB8118AC3991F39D5E3C7682DFF59526A0AEEF2CA9DD9",
+      "match": true
+    },
+    {
+      "path": ".ifrim/LOOP_REPORTS/2026-10-08-client-operational-rules-intake.md",
+      "expected": "84E0F59F8B197785BAAFDA6E21C69EE66A6C25B29FE05F413CBBBDD1CB7F01BB",
+      "actual": "84E0F59F8B197785BAAFDA6E21C69EE66A6C25B29FE05F413CBBBDD1CB7F01BB",
+      "match": true
+    },
+    {
+      "path": ".ifrim/LOOP_REPORTS/2026-10-09-client-operational-rules-followup.md",
+      "expected": "DAC6110FD47299DCBBA1149730B670E01BF2D4CE3EF0DE270AB986BF39B4139D",
+      "actual": "DAC6110FD47299DCBBA1149730B670E01BF2D4CE3EF0DE270AB986BF39B4139D",
+      "match": true
+    },
+    {
+      "path": ".ifrim/LOOP_REPORTS/2026-10-12-client-operational-rules-third-set.md",
+      "expected": "C37E78ACD96A437B0C03A4228B8A8B858B7F3E4C357717107FE51976D868A319",
+      "actual": "C37E78ACD96A437B0C03A4228B8A8B858B7F3E4C357717107FE51976D868A319",
+      "match": true
+    },
+    {
+      "path": ".ifrim/LOOP_REPORTS/2026-10-12-developer-answers-gradual-pilot.md",
+      "expected": "AB084608C4B14442F5BCAB0C8F5617CE993B665D789512DDB3BCB8D657CD6425",
+      "actual": "AB084608C4B14442F5BCAB0C8F5617CE993B665D789512DDB3BCB8D657CD6425",
+      "match": true
+    },
+    {
+      "path": ".ifrim/LOOP_REPORTS/2026-10-10-stage12-independent-closure.md",
+      "expected": "96BAD8D9168D55F9C536369592B0876B5FE78B01FE7D4E3750F5134B13E45005",
+      "actual": "96BAD8D9168D55F9C536369592B0876B5FE78B01FE7D4E3750F5134B13E45005",
+      "match": true
+    },
+    {
+      "path": ".ifrim/LOOP_REPORTS/2026-10-11-restaurant-refactor-final.md",
+      "expected": "C97AFDBD4F55D7D0ADD6904C1EF65B0591BA17CE819D5A4612C09B0C71ECE9B0",
+      "actual": "C97AFDBD4F55D7D0ADD6904C1EF65B0591BA17CE819D5A4612C09B0C71ECE9B0",
+      "match": true
+    },
+    {
+      "path": ".ifrim/LOOP_REPORTS/2026-10-11-stage1-d0-inventory.md",
+      "expected": "EEB63BE9BB14DCA1AB3B92D9D53BE02AA7ACA95CD45411484717EB5063A98D70",
+      "actual": "EEB63BE9BB14DCA1AB3B92D9D53BE02AA7ACA95CD45411484717EB5063A98D70",
+      "match": true
+    },
+    {
+      "path": ".ifrim/SPECIFICATIONS/PD-DISPATCH-01.md",
+      "expected": "0D55718DB0BA94399338C9C7B9E438DE1BC298632D68D06277374841755C41C1",
+      "actual": "0D55718DB0BA94399338C9C7B9E438DE1BC298632D68D06277374841755C41C1",
+      "match": true
+    },
+    {
+      "path": ".ifrim/SPECIFICATIONS/2026-10-11-PD-DISPATCH-01-current-addendum.md",
+      "expected": "3ACA170DF7820709E56D6FA05C1A14ADAF97979E01B7486D411F784B20A77681",
+      "actual": "3ACA170DF7820709E56D6FA05C1A14ADAF97979E01B7486D411F784B20A77681",
+      "match": true
+    },
+    {
+      "path": ".ifrim/SPECIFICATIONS/PD-ORDER-MUTATION-CONTRACTS.md",
+      "expected": "4D26D805C36F448D329AB8026F43E90FC34CA70302741A726B8826998950815A",
+      "actual": "4D26D805C36F448D329AB8026F43E90FC34CA70302741A726B8826998950815A",
+      "match": true
+    },
+    {
+      "path": ".ifrim/SPECIFICATIONS/PD-ORDER-STATUS-RECOVERY.md",
+      "expected": "E5C972921D5F1DCEED32BF962CAB9FD8503C1FE1FDF3AA75F8961DA530CFBD5D",
+      "actual": "E5C972921D5F1DCEED32BF962CAB9FD8503C1FE1FDF3AA75F8961DA530CFBD5D",
+      "match": true
+    },
+    {
+      "path": ".ifrim/SPECIFICATIONS/PD-ORDER-ASSIGN-RECOVERY.md",
+      "expected": "F9CB1C794A37A9CE6EAE25DEAAB46FB53086456B1DE300A8B437591D677B6F24",
+      "actual": "F9CB1C794A37A9CE6EAE25DEAAB46FB53086456B1DE300A8B437591D677B6F24",
+      "match": true
+    },
+    {
+      "path": ".ifrim/TASK_PACKETS/2026-10-10-prodelivery-master-roadmap.md",
+      "expected": "9A210D45EB9BB6BED9F491283A6B072F785C04CF3BDDB3AFBA7A67195342D4B1",
+      "actual": "9A210D45EB9BB6BED9F491283A6B072F785C04CF3BDDB3AFBA7A67195342D4B1",
+      "match": true
+    },
+    {
+      "path": "backend/models/order.py",
+      "expected": "93B7DD6B4604EACDBD0092F4EC359AF8D791A419495153DFB3BF2B5F58363B88",
+      "actual": "93B7DD6B4604EACDBD0092F4EC359AF8D791A419495153DFB3BF2B5F58363B88",
+      "match": true
+    },
+    {
+      "path": "backend/models/driver.py",
+      "expected": "5E82BA2252226892D40A88BB72EA4509F34051528B2DF5683FE304D3CB4E38E7",
+      "actual": "5E82BA2252226892D40A88BB72EA4509F34051528B2DF5683FE304D3CB4E38E7",
+      "match": true
+    },
+    {
+      "path": "backend/routers/orders.py",
+      "expected": "8F215AE7C2B6D9336A029EE52C96BCDED91D23A0B1D94FE51E7DE3FA403ABD7F",
+      "actual": "8F215AE7C2B6D9336A029EE52C96BCDED91D23A0B1D94FE51E7DE3FA403ABD7F",
+      "match": true
+    },
+    {
+      "path": "backend/routers/drivers.py",
+      "expected": "1B6F53950D71886F05B38C50D795E186E1F9011DEB9D6BD5A10D75163C0C363B",
+      "actual": "1B6F53950D71886F05B38C50D795E186E1F9011DEB9D6BD5A10D75163C0C363B",
+      "match": true
+    },
+    {
+      "path": "backend/routers/restaurants.py",
+      "expected": "3A2906A3C841F74C1BB893949884B48A04F3B4D1B7E77FCE6CB89F213168E093",
+      "actual": "3A2906A3C841F74C1BB893949884B48A04F3B4D1B7E77FCE6CB89F213168E093",
+      "match": true
+    },
+    {
+      "path": "backend/utils/order_creation.py",
+      "expected": "D53E6266E558DAA404E4530D614CF38732CBDA72B318DE36F3ACD03BD45A67A7",
+      "actual": "D53E6266E558DAA404E4530D614CF38732CBDA72B318DE36F3ACD03BD45A67A7",
+      "match": true
+    },
+    {
+      "path": "backend/utils/order_status.py",
+      "expected": "CC314C60A14C07B46818414DC27C1A373C2F935C2361A9BF624EF75B34057CA4",
+      "actual": "CC314C60A14C07B46818414DC27C1A373C2F935C2361A9BF624EF75B34057CA4",
+      "match": true
+    },
+    {
+      "path": "frontend/src/pages/DriverApp.jsx",
+      "expected": "FBD447378744ADB74ABEBA1B630FC9633A2E2753619F7A974E17CC3CB8D28BD4",
+      "actual": "FBD447378744ADB74ABEBA1B630FC9633A2E2753619F7A974E17CC3CB8D28BD4",
+      "match": true
+    }
+  ],
+  "outputHashChecks": [
+    {
+      "path": "L1_TASK_PACKET.md",
+      "expected": "20EB05A3B0B429F7A39821860BB4F3BFB46C118E923B890E6EEC330403C4620E",
+      "actual": "20EB05A3B0B429F7A39821860BB4F3BFB46C118E923B890E6EEC330403C4620E",
+      "match": true,
+      "bytesMatch": true
+    },
+    {
+      "path": "L1_REQUIREMENTS_DELTA_MATRIX.md",
+      "expected": "E79F1774ED83B04129A6BFFA11F360EC7C56C736F0FBD690A7CBB565F78716CE",
+      "actual": "E79F1774ED83B04129A6BFFA11F360EC7C56C736F0FBD690A7CBB565F78716CE",
+      "match": true,
+      "bytesMatch": true
+    },
+    {
+      "path": "L1_PROPOSED_SPEC_ADDITIONS.md",
+      "expected": "AD4A8CCB96B7CA34CF9085F1DC261B2F67A32D03DC3CA7878456EE19BF38B6D6",
+      "actual": "AD4A8CCB96B7CA34CF9085F1DC261B2F67A32D03DC3CA7878456EE19BF38B6D6",
+      "match": true,
+      "bytesMatch": true
+    }
+  ],
+  "exactAnchorChecks": [
+    {
+      "path": ".ifrim\\SPECIFICATIONS\\PD-DISPATCH-01.md",
+      "text": "# PD-DISPATCH-01 - specificatie de lucru pentru asignare multipla",
+      "lines": [
+        11
+      ],
+      "match": true
+    },
+    {
+      "path": ".ifrim\\SPECIFICATIONS\\2026-10-11-PD-DISPATCH-01-current-addendum.md",
+      "text": "## Ce trebuie reconciliat înainte de un increment",
+      "lines": [
+        17
+      ],
+      "match": true
+    },
+    {
+      "path": ".ifrim\\SPECIFICATIONS\\PD-ORDER-MUTATION-CONTRACTS.md",
+      "text": "## Before any activation",
+      "lines": [
+        49
+      ],
+      "match": true
+    }
+  ],
+  "thirdSetSemantics": {
+    "Q1": "PASS: distinct restaurant/zone fixed remuneration and transport; no historical recalculation or universal example",
+    "Q2": "PASS: floor kilometers and 3RON/km minimum40 scope preserved; monetary rounding independent",
+    "Q3": "PASS: driver personal funds and restaurant approval distinct from payment; pickup/payment timing left open",
+    "Q4": "PASS: advance reimbursement obligation distinct from payment and product custody/return",
+    "Q5": "PASS: strict above50pct; no invented zero below/equal threshold; payer and zone1 basis unresolved",
+    "Q6": "PASS: road distance, restaurant transport, max2changes; before/after arrival separated and second-supplement semantics open",
+    "Q7": "PASS: withdrawn question, settlements preserved, no invented due date",
+    "Q8": "PASS: withdrawn question, close-day/ordercontinuation preserved; local proof notcommercial closure",
+    "Q9": "PASS: vehicle capacity and crossrestaurant grouping permitted; physical capacity/delay unresolved",
+    "Q10": "PASS: valid assigned task mandatory, technical ACK distinct, no commercial refusal; committed task notexpired by missing ACK",
+    "Q11": "PASS: deferred pause rule preserved; A+B versus A+B+C and admission cutoff unresolved"
+  },
+  "guardrails": [
+    "Stages1/2/7 remain open; no commercial implementation, activation, physical or live PASS claimed",
+    "Q7/Q8 withdrawal is notfunction deletion",
+    "Earlier A0-A8 and D0 closure treated within original limited scope",
+    "Approved independent-lot campaign advancement explicitly attributed to current parent/user instruction",
+    "18question grid kept distinct/unreconstructed",
+    "Spec amendments remain proposals with source-version and integration gates",
+    "Technical reservation/commit/ACK model identified as proposal, notnew client policy"
+  ],
+  "counts": {
+    "sourceHashes": 24,
+    "outputs": 3,
+    "anchors": 3,
+    "thirdSetQuestions": 11
+  },
+  "limits": [
+    "Documentary/static QA only; no app/API/browser/device execution",
+    "Finite manifest source list only; notwhole-project audit",
+    "No active-project write; only independent-qa.json generated",
+    "Initial read-only hash probe used wrong outputfield relative_path; final check correctly uses name plus absolute_path identity and all3hashes match"
+  ],
+  "manifestSha256": "815DF907CF8D734E7FC865CE61A77E752B539C70EA12C3FFEEC93EB031D5C7E1"
+}

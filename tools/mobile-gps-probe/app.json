@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "ProDelivery GPS Probe",
+    "slug": "prodelivery-local-gps-probe",
+    "version": "0.1.6",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "platforms": [
+      "android",
+      "ios"
+    ],
+    "updates": {
+      "enabled": false
+    },
+    "ios": {
+      "bundleIdentifier": "ro.ifrimdigital.prodelivery.gpsprobe",
+      "supportsTablet": false
+    },
+    "android": {
+      "package": "ro.ifrimdigital.prodelivery.gpsprobe",
+      "versionCode": 7,
+      "permissions": [
+        "android.permission.RECEIVE_BOOT_COMPLETED"
+      ],
+      "allowBackup": false
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Proba salveaza GPS numai local dupa apasarea Start.",
+          "locationAlwaysAndWhenInUsePermission": "Modul Fundal salveaza GPS local inclusiv cu ecranul blocat, pana la Stop.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      "expo-sqlite",
+      "./plugins/android-backup-protection.cjs",
+      "./plugins/android-diagnostic-build.cjs",
+      "./plugins/android-location-stop-lifecycle.cjs"
+    ]
+  }
+}

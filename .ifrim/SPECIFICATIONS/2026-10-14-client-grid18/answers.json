@@ -1,0 +1,107 @@
+{
+  "intake_date": "2026-10-14",
+  "client_original_message_date": "unknown",
+  "questions_source": "C:\\Users\\mihai\\.codex\\attachments\\54ec0f6d-6efb-4481-b631-ad0d9ab65e48\\Text lipit.txt",
+  "questions_sha256": "48c5b24d726ad8a5cad805194d398cb481fb99c56f3855d90b10b96c533641a6",
+  "answers": [
+    {
+      "question": 1,
+      "raw_answer": "A"
+    },
+    {
+      "question": 2,
+      "raw_answer": "A"
+    },
+    {
+      "question": 3,
+      "raw_answer": "D"
+    },
+    {
+      "question": 4,
+      "raw_answer": "A"
+    },
+    {
+      "question": 5,
+      "raw_answer": "A"
+    },
+    {
+      "question": 6,
+      "raw_answer": "A"
+    },
+    {
+      "question": 7,
+      "raw_answer": "B sau C"
+    },
+    {
+      "question": 8,
+      "raw_answer": "A"
+    },
+    {
+      "question": 9,
+      "raw_answer": "A"
+    },
+    {
+      "question": 10,
+      "raw_answer": "A"
+    },
+    {
+      "question": 11,
+      "raw_answer": "Întrebare anulată"
+    },
+    {
+      "question": 12,
+      "raw_answer": "Întrebare anulată"
+    },
+    {
+      "question": 13,
+      "raw_answer": "B"
+    },
+    {
+      "question": 14,
+      "raw_answer": "A"
+    },
+    {
+      "question": 15,
+      "raw_answer": "B"
+    },
+    {
+      "question": 16,
+      "raw_answer": "C"
+    },
+    {
+      "question": 17,
+      "raw_answer": "D"
+    },
+    {
+      "question": 18,
+      "raw_answer": "C"
+    }
+  ],
+  "later_clarifications": {
+    "7": {
+      "source": "user question reply in this conversation",
+      "answer": "La următoarea ridicare de la același restaurant; dacă nu există, la finalul programului."
+    }
+  },
+  "incomplete_answers": [
+    3,
+    17
+  ],
+  "required_parameters": [
+    1,
+    3,
+    13,
+    15,
+    16
+  ],
+  "qualification": "2A kept exactly; final failed-trip policy pending reconciliation with3D. Parameters do not imply the entire chosen behavior is ambiguous.",
+  "withdrawn_questions_current_grid": [
+    11,
+    12
+  ],
+  "prior_withdrawn_questions_distinct_grid": [
+    7,
+    8
+  ],
+  "scope": "Documentary only; no application changes or new activation."
+}

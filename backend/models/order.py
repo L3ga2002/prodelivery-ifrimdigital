@@ -1,7 +1,10 @@
-from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator, model_serializer
 from typing import Literal, Optional
 from datetime import datetime, timezone
 import uuid
+from models.order_finance import FinancialSnapshot
+from models.financial_activity import FinancialActivity
+from models.custody_activity import CustodyActivity
 
 
 ORDER_STATUS_VALUES = ("NEW", "PREPARING", "READY", "ASSIGNED", "ACCEPTED", "PICKED_UP", "DELIVERED", "CANCELLED")
@@ -53,6 +56,14 @@ class Order(BaseModel):
     delivery_fee: float = 0
     total_amount: float
     payment_type: PaymentType
+    order_version: int | None = Field(default=None, strict=True, ge=0, le=9223372036854775807)
+    creation_operation_ref: str | None = None
+    financial_contract_version: int | None = Field(default=None, strict=True, ge=1, le=1)
+    financial: FinancialSnapshot | None = None
+    financial_activity_contract_version: int | None = Field(default=None, strict=True, ge=1, le=1)
+    financial_activity: FinancialActivity | None = None
+    custody_contract_version: int | None = Field(default=None, strict=True, ge=1, le=1)
+    custody_activity: CustodyActivity | None = None
     notes: Optional[str] = None
     status: OrderStatus = "NEW"
     zone: Optional[str] = None
@@ -61,9 +72,14 @@ class Order(BaseModel):
     delivery_sector: Optional[str] = None
     delivery_zone_level: Optional[int] = None
     linked_problem_order_id: Optional[str] = None
+    has_problem_followup: bool | None = Field(default=None, strict=True)
+    problem_followup_order_id: str | None = Field(default=None, max_length=120)
+    problem_followup_operation_ref: str | None = Field(default=None, max_length=128)
+    remake_operation_ref: str | None = Field(default=None, max_length=128)
     problem_type: Optional[str] = None
     problem_description: Optional[str] = None
     preparation_time: Optional[int] = None
+    preparation_status: Optional[Literal["NEW", "PREPARING", "READY"]] = None
     preparation_started_at: Optional[str] = None
     preparation_due_at: Optional[str] = None
     preparation_ready_at: Optional[str] = None
@@ -80,6 +96,50 @@ class Order(BaseModel):
     audit_trail: list[dict] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @model_validator(mode="after")
+    def financial_markers_agree(self):
+        if self.model_fields_set & {"custody_activity", "custody_contract_version"}:
+            from utils.custody_activity import inspect_custody, CustodyError
+            try:
+                # Avoid calling the custom serializer while validation is in progress.
+                value = {k: getattr(self, k) for k in self.model_fields_set}
+                for k in ("custody_activity", "financial_activity", "financial"):
+                    if value.get(k) is not None:
+                        value[k] = value[k].model_dump(mode="json")
+                if "items" in value:
+                    value["items"] = [v.model_dump(mode="json") for v in value["items"]]
+                inspect_custody(value)
+            except CustodyError:
+                raise ValueError("Custody requires its exact bound lifecycle") from None
+        if self.model_fields_set & {"financial", "financial_contract_version"}:
+            if (self.financial is None or self.financial_contract_version != 1
+                    or self.order_version is None or self.creation_operation_ref != self.financial.operation_ref
+                    or self.restaurant_id != self.financial.restaurant_id):
+                raise ValueError("Financial orders require their complete versioned lineage")
+        if self.model_fields_set & {"financial_activity", "financial_activity_contract_version"}:
+            activity = self.financial_activity
+            if (activity is None or self.financial_activity_contract_version != 1 or self.financial is None
+                or activity.order_id != self.id or activity.restaurant_id != self.restaurant_id
+                or activity.driver_id != self.driver_id or activity.financial_snapshot_digest != self.financial.snapshot_digest
+                or activity.declared_unpaid_bani != self.financial.advance_required_bani
+                or self.financial.collection_mode != "cash" or self.financial.advance_required_bani <= 0
+                or activity.assigned_at != self.assigned_at or activity.accepted_at != self.accepted_at):
+                raise ValueError("Financial activity requires the complete immutable quote and assignment binding")
+            if ((activity.status == "outstanding" and (self.status not in {"PICKED_UP", "DELIVERED"} and not (self.status == "CANCELLED" and self.custody_activity is not None) or activity.picked_up_at != self.picked_up_at))
+                or (activity.status != "outstanding" and (self.status not in {"ACCEPTED", "CANCELLED"} or self.picked_up_at is not None))):
+                raise ValueError("Financial activity must agree with actual custody")
+        return self
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_shape(self, handler):
+        data = handler(self)
+        for name in ("order_version", "creation_operation_ref", "financial_contract_version", "financial",
+                     "financial_activity_contract_version", "financial_activity", "custody_contract_version", "custody_activity",
+                     "has_problem_followup", "problem_followup_order_id", "problem_followup_operation_ref", "remake_operation_ref"):
+            if name not in self.model_fields_set:
+                data.pop(name, None)
+        return data
 
 
 class OrderCreate(BaseModel):

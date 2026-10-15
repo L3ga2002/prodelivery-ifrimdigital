@@ -1,3 +1,6 @@
+import { useOrderCustodyRecovery } from "../hooks/useOrderCustodyRecovery";
+import { CustodyRecoveryPanel } from "../components/OrderCustody";
+import { clientCollectionText, orderAmountLabel } from "../lib/orderFinance";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useAuth } from "../context/AuthContext";
 import axios from "axios";
@@ -49,6 +52,7 @@ import {
   Search,
   Info,
   SlidersHorizontal,
+  Pencil,
 } from "lucide-react";
 import { AdminScheduleView } from "../components/AdminScheduleView";
 import { AdminCommandCenter } from "../components/admin/AdminCommandCenter";
@@ -63,6 +67,19 @@ import { LocationAutocomplete } from "../components/LocationAutocomplete";
 import { useTheme } from "../context/ThemeContext";
 import { getApiErrorMessage, normalizeArray, normalizeObject, retryApiCall } from "../lib/api";
 import { useNetworkStatus } from "../hooks/useNetworkStatus";
+import { isActiveOrder } from "../lib/orderWorkflow";
+import { normalizeCreateOrder } from "../lib/orderCreationRecovery";
+import { useOrderCreationRecovery } from "../hooks/useOrderCreationRecovery";
+import { useOrderFinancePreview } from "../hooks/useOrderFinancePreview";
+import { OrderFinanceQuote } from "../components/OrderFinanceQuote";
+import { useOrderEditingRecovery } from "../hooks/useOrderEditingRecovery";
+import { RecoverySessionNotice } from "../components/RecoverySessionNotice";
+import { OrderCorrectionDialog } from "../components/admin/OrderCorrectionDialog";
+import { isOrderEditable } from "../lib/orderEditingRecovery";
+import { useOrderAssignmentRecovery } from "../hooks/useOrderAssignmentRecovery";
+import { hasAssignmentRevision, isOrderAssignable, isAssignmentDriverAvailable, assignmentTerminal } from "../lib/orderAssignmentRecovery";
+import { useOrderStatusRecovery, OrderStatusRecoveryPanel } from "../hooks/useOrderStatusRecovery";
+import { hasStatusRevision, canChangeOrderStatus, statusApplied } from "../lib/orderStatusRecovery";
 import {
   BarChart,
   Bar,
@@ -74,6 +91,14 @@ import {
 } from "recharts";
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
+
+const emptyOrderForm = () => ({
+  restaurant_id: "", customer_name: "", customer_phone: "", customer_address: "",
+  customer_latitude: null, customer_longitude: null, items: [{ name: "", quantity: 1, price: 0 }],
+  subtotal_amount: 0, delivery_fee: 0, total_amount: 0, delivery_zone_id: null,
+  delivery_zone_name: "", delivery_sector: "", delivery_zone_level: null,
+  payment_type: "CASH", notes: "", source: "S",
+});
 
 const getDriverStatusMeta = (driver) => {
   let status = driver.operational_status;
@@ -135,7 +160,7 @@ const RestaurantLocationMapInteractions = ({ onLocationChange }) => {
 const OrderLocationPicker = ({ value, onChange }) => {
   const orderMapCenter = useMemo(() => [46.567, 26.913], []);
   const selectedPosition = useMemo(() => {
-    if (!value.customer_latitude || !value.customer_longitude) return null;
+    if (!Number.isFinite(value.customer_latitude) || !Number.isFinite(value.customer_longitude)) return null;
     return [value.customer_latitude, value.customer_longitude];
   }, [value.customer_latitude, value.customer_longitude]);
 
@@ -210,10 +235,47 @@ const RestaurantLocationPreview = ({ restaurant, onLocationChange }) => {
 };
 
 const AdminDashboard = () => {
-  const { user, logout } = useAuth();
+  const { user, token, logout } = useAuth();
   const { isDark, toggleTheme } = useTheme();
   const { isOnline } = useNetworkStatus();
+  const orderRecovery = useOrderCreationRecovery(user?.id, API_URL, isOnline, token, { role: user?.role, restaurant_id: user?.restaurant_id });
+  const editRecovery = useOrderEditingRecovery(user?.role === "admin" ? user.id : null, API_URL, isOnline, token);
+  const assignmentActor = user?.role === "admin" && ["is_disabled", "account_disabled"].every((k) => !Object.hasOwn(user, k) || user[k] === false) ? user.id : null;
+  const assignRecovery = useOrderAssignmentRecovery(assignmentActor, API_URL, isOnline, token);
+  const statusRecovery = useOrderStatusRecovery(user, API_URL, isOnline, token, false);
+  const custodyRecovery = useOrderCustodyRecovery(user, API_URL, isOnline, token);
+  const custodyBusy = Boolean(custodyRecovery.record || custodyRecovery.storageInvalid || custodyRecovery.busy || custodyRecovery.sessionSuspended);
+  const [statusDialogOpen, setStatusDialogOpen] = useState(false);
+  const [statusOrderId, setStatusOrderId] = useState("");
+  const [statusCancelReason, setStatusCancelReason] = useState("");
+  const statusMutationRef = useRef(false), statusSession = useRef(null), statusMounted = useRef(false);
+  const handledStatusReceipt = useRef(null);
+  if (statusSession.current?.actor !== user?.id || statusSession.current?.token !== token) statusSession.current = { actor: user?.id, token };
+  useEffect(() => { statusMounted.current = true; return () => { statusMounted.current = false; }; }, []);
+  const restoredAssign = useRef(null), handledAssignReceipt = useRef(null), assignBusyRef = useRef(false);
+  const assignSession = useRef(null), assignMounted = useRef(false);
+  assignSession.current = { actor: user?.id, token };
+  useEffect(() => { assignMounted.current = true; return () => { assignMounted.current = false; }; }, []);
+  const [correctionSelection, setCorrectionSelection] = useState(null);
+  const restoredEdit = useRef(null);
+  const activeCorrection = correctionSelection?.actor === user?.id && correctionSelection?.token === token ? correctionSelection : null;
+  const inspectOrder = (order) => setCorrectionSelection({ actor: user?.id, token, order });
+  useEffect(() => {
+    const record = editRecovery.record;
+    if (record && (restoredEdit.current?.operation !== record.client_operation_id || restoredEdit.current?.actor !== user?.id || restoredEdit.current?.token !== token)) {
+      restoredEdit.current = { operation: record.client_operation_id, actor: user?.id, token };
+      setCorrectionSelection({ actor: user?.id, token, order: null });
+    }
+  }, [editRecovery.record, user?.id, token]);
+  const createOrderBusyRef = useRef(false);
+  const handledCreateReceiptRef = useRef(null);
   const [orders, setOrders] = useState([]);
+  const [orderReadReload, setOrderReadReload] = useState(0);
+  const [orderReadPoll, setOrderReadPoll] = useState(0);
+  const verifyStatusCapability = statusRecovery.verifyCapability;
+  const statusProbeOrder = orders.find((o) => o.id === statusOrderId);
+  const statusProbeVersioned = hasStatusRevision(statusProbeOrder);
+  useEffect(() => { if (statusDialogOpen && statusProbeVersioned && isOnline) void verifyStatusCapability(); }, [statusDialogOpen, statusProbeVersioned, statusProbeOrder?.id, isOnline, verifyStatusCapability]);
   const [drivers, setDrivers] = useState([]);
   const [restaurants, setRestaurants] = useState([]);
   const [stats, setStats] = useState({});
@@ -235,6 +297,20 @@ const AdminDashboard = () => {
   const [isRestaurantPickerOpen, setIsRestaurantPickerOpen] = useState(false);
   const [activeAdminTab, setActiveAdminTab] = useState("orders");
   const [isAssigning, setIsAssigning] = useState(false);
+  const assignmentFrozen = assignRecovery.sessionSuspended || isAssigning || assignRecovery.busy || Boolean(assignRecovery.record) || assignRecovery.storageInvalid || !assignRecovery.available;
+  useEffect(() => {
+    setIsAssignDialogOpen(false); setSelectedOrder(null); setSelectedDriver("");
+    setAssignDriverSearch(""); setAssignOrderSearch(""); setIsOrderSelectionLocked(false);
+    setIsAssigning(false); assignBusyRef.current = false;
+  }, [user?.id, token]);
+  useEffect(() => {
+    const record = assignRecovery.record;
+    if (record && (restoredAssign.current?.operation !== record.client_operation_id || restoredAssign.current?.actor !== user?.id || restoredAssign.current?.token !== token)) {
+      restoredAssign.current = { operation: record.client_operation_id, actor: user?.id, token };
+      setSelectedOrder({ id: record.order_id }); setSelectedDriver(record.driver_id);
+      setAssignDriverSearch(""); setAssignOrderSearch(""); setIsOrderSelectionLocked(true); setIsAssignDialogOpen(true);
+    }
+  }, [assignRecovery.record, user?.id, token]);
   const [isCreatingOrder, setIsCreatingOrder] = useState(false);
   const [isCreatingDriver, setIsCreatingDriver] = useState(false);
   const [isCreatingRestaurant, setIsCreatingRestaurant] = useState(false);
@@ -257,25 +333,14 @@ const AdminDashboard = () => {
   const [selectedRestaurantId, setSelectedRestaurantId] = useState(null);
 
   // New order form
-  const [newOrder, setNewOrder] = useState({
-    restaurant_id: "",
-    customer_name: "",
-    customer_phone: "",
-    customer_address: "",
-    customer_latitude: null,
-    customer_longitude: null,
-    items: [{ name: "", quantity: 1, price: 0 }],
-    subtotal_amount: 0,
-    delivery_fee: 0,
-    total_amount: 0,
-    delivery_zone_id: null,
-    delivery_zone_name: "",
-    delivery_sector: "",
-    delivery_zone_level: null,
-    payment_type: "CASH",
-    notes: "",
-    source: "S"
-  });
+  const [newOrder, setNewOrder] = useState(emptyOrderForm);
+  const [rawProducts, setRawProducts] = useState("");
+  const financialForm = useOrderFinancePreview({ actorId: user?.id, apiUrl: API_URL, token, role: user?.role,
+    actorRestaurantId: user?.restaurant_id ?? null, form: newOrder, rawProducts, normalizeOrder: normalizeCreateOrder,
+    isOnline, zonePending: isDetectingOrderZone, enabled: isNewOrderDialogOpen && !orderRecovery.record && !orderRecovery.sessionSuspended });
+  const createSessionRef = useRef(null);
+  createSessionRef.current = { actor: user?.id, token, role: user?.role, tenant: user?.restaurant_id, form: newOrder };
+  const creationFrozen = orderRecovery.sessionSuspended || isCreatingOrder || orderRecovery.busy || Boolean(orderRecovery.record) || orderRecovery.storageInvalid;
 
   // New driver form
   const [newDriver, setNewDriver] = useState({ name: "", phone: "", email: "", vehicle_type: "scooter" });
@@ -332,7 +397,10 @@ const AdminDashboard = () => {
     return () => clearInterval(moveInterval);
   }, [drivers]);
 
-  const fetchData = useCallback(async ({ manual = false, silent = false } = {}) => {
+  const fetchData = useCallback(async ({ manual = false, silent = false, refreshReads = manual || silent, currentIntent = () => true } = {}) => {
+    const session = statusSession.current;
+    if (!statusMounted.current || session?.actor !== user?.id || session?.token !== token || !currentIntent()) return false;
+    if (refreshReads) setOrderReadReload((value) => value + 1);
     const requestId = fetchDataRequestRef.current + 1;
     fetchDataRequestRef.current = requestId;
     if (manual) setIsRefreshingData(true);
@@ -345,26 +413,61 @@ const AdminDashboard = () => {
         axios.get(`${API_URL}/api/stats/hourly`),
         axios.get(`${API_URL}/api/stats/analytics`).catch(() => ({ data: null })),
       ]));
-      if (requestId !== fetchDataRequestRef.current) return;
+      if (requestId !== fetchDataRequestRef.current || statusMutationRef.current || statusSession.current !== session || !statusMounted.current || !currentIntent()) return false;
       setOrders(normalizeArray(ordersRes.data));
       setDrivers(normalizeArray(driversRes.data));
       setRestaurants(normalizeArray(restaurantsRes.data));
       setStats(normalizeObject(statsRes.data));
       setHourlyData(normalizeObject(hourlyRes.data, { hourly_orders: [] }));
       if (analyticsRes.data) setAnalyticsData(normalizeObject(analyticsRes.data, null));
+      if (!refreshReads) setOrderReadPoll((value) => value + 1);
+      return true;
     } catch (error) {
-      if (requestId === fetchDataRequestRef.current) {
+      if (requestId === fetchDataRequestRef.current && statusSession.current === session && statusMounted.current && currentIntent()) {
         if (!silent) {
           toast.error(getApiErrorMessage(error, "Eroare la încărcarea datelor"));
         }
       }
+      return false;
     } finally {
-      if (requestId === fetchDataRequestRef.current) {
+      if (requestId === fetchDataRequestRef.current && statusSession.current === session && statusMounted.current && currentIntent()) {
         setIsLoading(false);
       }
-      if (manual) setIsRefreshingData(false);
+      if (manual && statusSession.current === session && statusMounted.current && currentIntent()) setIsRefreshingData(false);
     }
-  }, []);
+  }, [user?.id, token]);
+
+  const submitStatus = async (order, status, cancellationReason, confirmedCapability) => {
+    if (custodyBusy || statusMutationRef.current || !isOnline || statusRecovery.blocked || (confirmedCapability === undefined && !statusRecovery.canSubmit(order)) || !canChangeOrderStatus(order, status, user)) return null;
+    if (hasStatusRevision(order) && confirmedCapability === false) return null;
+    const session = statusSession.current;
+    const ownsSession = () => statusMounted.current && statusSession.current === session;
+    statusMutationRef.current = true; fetchDataRequestRef.current += 1;
+    try {
+      const command = { order, status, ...(status === "CANCELLED" ? { cancellationReason } : {}) };
+      const versioned = hasStatusRevision(order);
+      const result = await (versioned ? statusRecovery.submit(command) : statusRecovery.submitLegacy(command));
+      if (!ownsSession() || !result || (versioned && !statusApplied(result))) return null;
+      if (!versioned) { toast.success("Status actualizat"); setStatusCancelReason(""); }
+      return result;
+    } finally {
+      statusMutationRef.current = false;
+      if (ownsSession()) { fetchDataRequestRef.current += 1; await fetchData({ silent: true }); }
+    }
+  };
+  useEffect(() => {
+    const r = statusRecovery.record;
+    if (!r || !statusApplied(r.receipt)) return;
+    const key = `${user?.id}:${token}:${r.client_operation_id}`;
+    if (handledStatusReceipt.current === key) return;
+    handledStatusReceipt.current = key; fetchDataRequestRef.current += 1;
+    toast.success("Status confirmat"); setStatusCancelReason("");
+    if (!statusMutationRef.current) void fetchData({ silent: true });
+  }, [statusRecovery.record, fetchData, user?.id, token]);
+  useEffect(() => {
+    fetchDataRequestRef.current += 1; setOrders([]); setStatusDialogOpen(false); setStatusOrderId(""); setStatusCancelReason("");
+    void fetchData({ silent: true });
+  }, [user?.id, token, fetchData]);
 
   useEffect(() => {
     fetchData();
@@ -399,6 +502,7 @@ const AdminDashboard = () => {
   }, [effectiveRestaurantId]);
 
   const handleAssignOrder = (order) => {
+    if (assignRecovery.record || assignRecovery.busy || assignBusyRef.current) { setIsAssignDialogOpen(true); return; }
     setSelectedOrder(order);
     setSelectedDriver("");
     setAssignDriverSearch("");
@@ -408,6 +512,7 @@ const AdminDashboard = () => {
   };
 
   const handleAssignDriverFromMap = (driver) => {
+    if (assignRecovery.record || assignRecovery.busy || assignBusyRef.current) { setIsAssignDialogOpen(true); return; }
     setSelectedOrder(null);
     setSelectedDriver(driver.id);
     setAssignDriverSearch(driver.name || "");
@@ -423,7 +528,7 @@ const AdminDashboard = () => {
   }, [assignDriverSearch]);
 
   const confirmAssign = async () => {
-    if (isAssigning) return;
+    if (assignBusyRef.current || assignmentFrozen || !isOnline) return;
     if (!selectedOrder?.id) {
       toast.error("Selectează comanda pentru alocare");
       return;
@@ -432,60 +537,141 @@ const AdminDashboard = () => {
       toast.error("Selectează un livrator");
       return;
     }
+    if (!isOrderAssignable(selectedOrder) || !isAssignmentDriverAvailable(drivers.find((d) => d.id === selectedDriver)) || selectedDriver === selectedOrder.driver_id) {
+      toast.error("Comanda sau livratorul nu mai este eligibil pentru alocare."); return;
+    }
+    const session = assignSession.current;
+    const sameSession = () => assignMounted.current && assignSession.current.actor === session.actor && assignSession.current.token === session.token;
+    assignBusyRef.current = true;
     setIsAssigning(true);
     try {
-      await axios.put(`${API_URL}/api/orders/${selectedOrder.id}/assign`, { driver_id: selectedDriver });
+      if (hasAssignmentRevision(selectedOrder)) {
+        await assignRecovery.submit({ order: selectedOrder, driverId: selectedDriver, driver: drivers.find((d) => d.id === selectedDriver) });
+        return;
+      }
+      const result = await assignRecovery.submitLegacy({ order: selectedOrder, driverId: selectedDriver, driver: drivers.find((d) => d.id === selectedDriver) });
+      if (!result || !sameSession()) return;
       toast.success("Comandă alocată cu succes!");
       setIsAssignDialogOpen(false);
       setIsOrderSelectionLocked(false);
       await fetchData({ silent: true });
     } catch (error) {
-      toast.error(getApiErrorMessage(error, "Eroare la alocare"));
+      if (sameSession()) toast.error(getApiErrorMessage(error, "Eroare la alocare"));
     } finally {
-      setIsAssigning(false);
+      if (sameSession()) { assignBusyRef.current = false; setIsAssigning(false); }
     }
   };
 
+  useEffect(() => {
+    const r = assignRecovery.record;
+    if (!["applied", "replayed"].includes(r?.receipt?.state) || (handledAssignReceipt.current?.operation === r.client_operation_id &&
+      handledAssignReceipt.current?.actor === user?.id && handledAssignReceipt.current?.token === token)) return;
+    handledAssignReceipt.current = { operation: r.client_operation_id, actor: user?.id, token };
+    toast.success(r.receipt.state === "replayed" ? "Alocarea a fost recuperata." : "Alocarea este confirmata.");
+    void fetchData({ silent: true });
+  }, [assignRecovery.record, fetchData, user?.id, token]);
+  const acknowledgeAssignment = async () => {
+    if (!await assignRecovery.acknowledge()) return;
+    setIsAssignDialogOpen(false); setIsOrderSelectionLocked(false); setSelectedOrder(null); setSelectedDriver("");
+    setAssignDriverSearch(""); setAssignOrderSearch("");
+  };
+  const retryAssignment = async () => {
+    const fresh = await assignRecovery.refreshForNewAttempt();
+    if (!fresh) return;
+    setSelectedOrder(fresh); setSelectedDriver(""); setAssignDriverSearch(""); setIsOrderSelectionLocked(true);
+    void fetchData({ silent: true });
+  };
+
+  const handleCreateReceipt = useCallback(async (receipt) => {
+    if (!receipt || !["applied", "replayed"].includes(receipt.state)
+      || handledCreateReceiptRef.current === receipt.client_operation_id) return;
+    const proof = orderRecovery.captureIntent?.();
+    if (proof && proof.client_operation_id !== receipt.client_operation_id) return;
+    const currentIntent = () => !proof || orderRecovery.isCurrentIntent(proof);
+    if (!currentIntent()) return;
+    handledCreateReceiptRef.current = receipt.client_operation_id;
+    toast.success(receipt.state === "replayed" ? "Comanda a fost recuperată." : "Comandă creată!");
+    setIsNewOrderDialogOpen(false);
+    setNewOrder(emptyOrderForm());
+    detectZoneRequestRef.current += 1;
+    const refreshed = await fetchData({ silent: true, currentIntent });
+    if (currentIntent() && !refreshed) toast.warning("Comanda este salvată, dar lista nu s-a actualizat. Reîncarcă lista; nu crea din nou comanda.");
+  }, [fetchData, orderRecovery.captureIntent, orderRecovery.isCurrentIntent]);
+
+  useEffect(() => {
+    if (orderRecovery.record?.version !== 2 && orderRecovery.record?.receipt) handleCreateReceipt(orderRecovery.record.receipt);
+  }, [orderRecovery.record, handleCreateReceipt]);
+
   const createOrder = async () => {
-    if (isCreatingOrder) return;
-    if (!newOrder.restaurant_id || !newOrder.customer_name || !newOrder.customer_phone || !newOrder.customer_latitude || !newOrder.customer_longitude) {
-      toast.error("Completează câmpurile obligatorii");
+    if (orderRecovery.sessionSuspended || createOrderBusyRef.current || orderRecovery.busy || orderRecovery.record || orderRecovery.storageInvalid) return;
+    if (financialForm.mode !== "legacy") {
+      if (!financialForm.readyToSubmit || !financialForm.submission || !isOnline) {
+        toast.error("Verifică și confirmă cotația curentă înainte de creare."); return;
+      }
+      const job = {}; createOrderBusyRef.current = job; setIsCreatingOrder(true);
+      try { await orderRecovery.submit(financialForm.submission); }
+      finally { if (createOrderBusyRef.current === job) { createOrderBusyRef.current = false; setIsCreatingOrder(false); } }
       return;
     }
-    if (!newOrder.delivery_zone_id) {
+    if (!orderRecovery.capability.ready || !isOnline) {
+      toast.error("Verifică disponibilitatea serverului și conexiunea înainte de a trimite comanda.");
+      return;
+    }
+    let payload;
+    try { payload = normalizeCreateOrder(newOrder); }
+    catch (error) { toast.error(error.message); return; }
+    if (!Number.isFinite(payload.customer_latitude) || !Number.isFinite(payload.customer_longitude) || !payload.delivery_zone_id) {
       toast.error("Selectează o locație validă dintr-o zonă de livrare");
       return;
     }
+    createOrderBusyRef.current = true;
     setIsCreatingOrder(true);
     try {
-      await axios.post(`${API_URL}/api/orders`, newOrder);
+      if (orderRecovery.capability.enabled) {
+        const receipt = await orderRecovery.submit(payload);
+        await handleCreateReceipt(receipt);
+        return;
+      }
+      // Legacy is selected only before any recoverable identity exists.
+      const legacyResult = await orderRecovery.submitLegacy(payload);
+      if (!legacyResult) return;
       toast.success("Comandă creată!");
       setIsNewOrderDialogOpen(false);
-      setNewOrder({
-        restaurant_id: "",
-        customer_name: "",
-        customer_phone: "",
-        customer_address: "",
-        customer_latitude: null,
-        customer_longitude: null,
-        items: [{ name: "", quantity: 1, price: 0 }],
-        subtotal_amount: 0,
-        delivery_fee: 0,
-        total_amount: 0,
-        delivery_zone_id: null,
-        delivery_zone_name: "",
-        delivery_sector: "",
-        delivery_zone_level: null,
-        payment_type: "CASH",
-        notes: "",
-        source: "S"
-      });
-      await fetchData({ silent: true });
+      setNewOrder(emptyOrderForm());
+      const refreshed = await fetchData({ silent: true });
+      if (!refreshed) toast.warning("Comanda este salvată, dar lista nu s-a actualizat. Reîncarcă lista; nu crea din nou comanda.");
     } catch (error) {
       toast.error(getApiErrorMessage(error, "Eroare la creare comandă"));
     } finally {
+      createOrderBusyRef.current = false;
       setIsCreatingOrder(false);
     }
+  };
+
+  const startAnotherOrder = async () => {
+    const financial = orderRecovery.record?.version === 2;
+    const previous = orderRecovery.record;
+    const proof = financial ? orderRecovery.captureIntent() : null;
+    if (financial && ["applied", "replayed"].includes(previous?.receipt?.state)) {
+      const refreshed = await fetchData({ silent: true, refreshReads: false, currentIntent: () => orderRecovery.isCurrentIntent(proof) });
+      if (!orderRecovery.isCurrentIntent(proof)) return;
+      if (!refreshed) { toast.warning("Lista nu s-a actualizat. Identitatea comenzii este păstrată; reîncearcă verificarea."); return; }
+    }
+    const acknowledged = await orderRecovery.acknowledge();
+    if (!acknowledged) return;
+    if (financial && !orderRecovery.isCurrentIntent(proof, true)) return;
+    if (financial) {
+      financialForm.reset(); detectZoneRequestRef.current += 1;
+      if (previous?.receipt?.state !== "rejected") { setNewOrder(emptyOrderForm()); setRawProducts(""); }
+      handledCreateReceiptRef.current = null;
+      if (["applied", "replayed"].includes(previous?.receipt?.state)) {
+        toast.success("Comanda salvată a fost verificată.");
+        setOrderReadReload((value) => value + 1);
+      }
+      return;
+    }
+    if (orderRecovery.record?.receipt?.state !== "rejected") setNewOrder(emptyOrderForm());
+    handledCreateReceiptRef.current = null;
   };
 
   const detectOrderZone = useCallback(async (lat, lng) => {
@@ -494,6 +680,13 @@ const AdminDashboard = () => {
       return;
     }
     const requestId = detectZoneRequestRef.current + 1;
+    const owner = createSessionRef.current;
+    const stillCurrent = () => {
+      const current = createSessionRef.current;
+      return requestId === detectZoneRequestRef.current && current.actor === owner.actor && current.token === owner.token
+        && current.role === owner.role && current.tenant === owner.tenant && current.form.restaurant_id === owner.form.restaurant_id
+        && current.form.customer_latitude === lat && current.form.customer_longitude === lng;
+    };
     detectZoneRequestRef.current = requestId;
     setIsDetectingOrderZone(true);
     try {
@@ -502,9 +695,10 @@ const AdminDashboard = () => {
         lat,
         lng,
       });
-      if (requestId !== detectZoneRequestRef.current) return;
+      if (!stillCurrent()) return;
       const zone = normalizeObject(response.data);
       setNewOrder((prev) => {
+        if (prev.restaurant_id !== owner.form.restaurant_id || prev.customer_latitude !== lat || prev.customer_longitude !== lng) return prev;
         const deliveryFee = zone.fee || 0;
         const subtotal = Number(prev.subtotal_amount || 0);
         return {
@@ -518,12 +712,12 @@ const AdminDashboard = () => {
         };
       });
       if (zone.zone_id) {
-        toast.success(`Zonă detectată: ${zone.zone_name} · ${zone.fee} lei`);
+        toast.success(financialForm.mode === "legacy" ? `Zonă detectată: ${zone.zone_name} · ${zone.fee} lei` : `Zonă detectată: ${zone.zone_name}`);
       } else {
         toast.error("Adresa este în afara zonelor acestui restaurant");
       }
     } catch (error) {
-      if (requestId === detectZoneRequestRef.current) {
+      if (stillCurrent()) {
         toast.error(getApiErrorMessage(error, "Nu am putut detecta zona"));
       }
     } finally {
@@ -531,7 +725,7 @@ const AdminDashboard = () => {
         setIsDetectingOrderZone(false);
       }
     }
-  }, [newOrder.restaurant_id, setNewOrder]);
+  }, [newOrder.restaurant_id, setNewOrder, financialForm.mode]);
 
   const updateOrderLocation = useCallback((location) => {
     setNewOrder((prev) => ({
@@ -544,7 +738,7 @@ const AdminDashboard = () => {
       delivery_fee: 0,
       total_amount: Number(prev.subtotal_amount || 0),
     }));
-    if (location.customer_latitude && location.customer_longitude) {
+    if (Number.isFinite(location.customer_latitude) && Number.isFinite(location.customer_longitude)) {
       detectOrderZone(location.customer_latitude, location.customer_longitude);
     }
   }, [detectOrderZone]);
@@ -633,6 +827,18 @@ const AdminDashboard = () => {
   };
 
   const runSimulation = async () => {
+    if (custodyBusy || statusRecovery.blocked || statusMutationRef.current) return;
+    const session = statusSession.current;
+    const simulateStatus = async (orderId, status) => {
+      if (statusSession.current !== session || !statusMounted.current || simAbort.current) throw new Error("SESSION_CHANGED");
+      const response = await axios.get(`${API_URL}/api/orders/${encodeURIComponent(orderId)}`, { timeout: 15000, headers: { "X-Expected-Actor-ID": user.id } });
+      if (statusSession.current !== session || !statusMounted.current) throw new Error("SESSION_CHANGED");
+      const enabled = hasStatusRevision(response.data) ? await statusRecovery.verifyCapability() : false;
+      if (enabled === null || enabled === undefined) throw new Error("Disponibilitatea statusului nu este confirmata.");
+      const result = await submitStatus(response.data, status, undefined, enabled);
+      if (!result) throw new Error("Status neconfirmat; verifica aceeasi operatie in panoul de recuperare.");
+      if (statusApplied(result) && !await statusRecovery.acknowledge()) throw new Error("Rezultatul necesita confirmare.");
+    };
     simAbort.current = false;
     setSimSteps(SIM_STEPS_TEMPLATE.map((s) => ({ ...s })));
     setIsSimRunning(true);
@@ -701,7 +907,7 @@ const AdminDashboard = () => {
       // Step 5: Livrator acceptă
       updateStep(4, "active");
       await wait(5000);
-      await axios.put(`${API_URL}/api/orders/${orderId}/status`, { status: "ACCEPTED" });
+      await simulateStatus(orderId, "ACCEPTED");
       updateStep(4, "done");
       if (simAbort.current) return;
       void fetchData({ silent: true });
@@ -709,7 +915,7 @@ const AdminDashboard = () => {
       // Step 6: Livrator ridică
       updateStep(5, "active");
       await wait(5000);
-      await axios.put(`${API_URL}/api/orders/${orderId}/status`, { status: "PICKED_UP" });
+      await simulateStatus(orderId, "PICKED_UP");
       updateStep(5, "done");
       if (simAbort.current) return;
       void fetchData({ silent: true });
@@ -717,7 +923,7 @@ const AdminDashboard = () => {
       // Step 7: Livrator livrează
       updateStep(6, "active");
       await wait(5000);
-      await axios.put(`${API_URL}/api/orders/${orderId}/status`, { status: "DELIVERED" });
+      await simulateStatus(orderId, "DELIVERED");
       updateStep(6, "done");
       void fetchData({ silent: true });
 
@@ -729,16 +935,17 @@ const AdminDashboard = () => {
     }
   };
 
-  const activeOrders = orders.filter((o) => o.status !== "DELIVERED");
+  const activeOrders = orders.filter(isActiveOrder);
+  const statusSelectedOrder = orders.find((o) => o.id === statusOrderId);
   const activeDrivers = drivers.filter((d) => ["active", "delivery", "break"].includes(d.operational_status) || d.is_active);
-  const canAssignDriver = (driver) => (driver.operational_status === "active" || (driver.is_active && !driver.operational_status)) && !driver.current_order_id;
+  const canAssignDriver = isAssignmentDriverAvailable;
   const driverAvailabilityLabel = (driver) => {
     if (canAssignDriver(driver)) return "Disponibil";
     if (driver.current_order_id || driver.operational_status === "delivery") return "În livrare";
     if (driver.operational_status === "break") return "În pauză";
     return "Offline";
   };
-  const assignableOrders = activeOrders.filter((order) => ["NEW", "PREPARING", "READY"].includes(order.status));
+  const assignableOrders = activeOrders.filter(isOrderAssignable);
   const filteredDriverCandidates = drivers
     .filter((driver) => {
       if (!debouncedAssignDriverSearch) return true;
@@ -761,10 +968,24 @@ const AdminDashboard = () => {
   });
   const selectedRestaurant = restaurants.find((restaurant) => restaurant.id === selectedRestaurantId) || restaurants[0] || null;
 
-  if (isLoading) {
+  const correctionSelectedOrder = orders.find((o) => o.id === selectedOrder?.id) || selectedOrder;
+  const assignmentDisplayOrder = assignRecovery.record
+    ? orders.find((o) => o.id === assignRecovery.record.order_id) || { id: assignRecovery.record.order_id }
+    : selectedOrder;
+  const assignmentVersioned = hasAssignmentRevision(selectedOrder);
+  const assignmentReceipt = assignRecovery.record?.receipt;
+  const correctionDialog = user?.role === "admin" ? <OrderCorrectionDialog
+    key={`${user.id}:${token ?? "cookie"}`}
+    order={activeCorrection?.order || orders.find((o) => o.id === editRecovery.record?.order_id)}
+    open={Boolean(activeCorrection)} onClose={() => setCorrectionSelection(null)}
+    recovery={editRecovery} isOnline={isOnline} onApplied={() => fetchData({ silent: true })}
+  /> : null;
+
+  if (isLoading && !statusRecovery.record && !statusRecovery.storageInvalid && !custodyRecovery.record && !custodyRecovery.storageInvalid) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+        {correctionDialog}
       </div>
     );
   }
@@ -772,6 +993,21 @@ const AdminDashboard = () => {
   return (
     <div className="min-h-screen overflow-x-hidden bg-muted/30" data-testid="admin-dashboard">
       {/* Header */}
+      <Dialog open={statusDialogOpen} onOpenChange={setStatusDialogOpen}>
+        <DialogContent data-testid="admin-status-dialog">
+          <DialogHeader><DialogTitle>Status comanda</DialogTitle><DialogDescription>Confirma actiunea operationala.</DialogDescription></DialogHeader>
+          <Select value={statusOrderId} onValueChange={setStatusOrderId} disabled={statusRecovery.blocked || statusMutationRef.current}>
+            <SelectTrigger data-testid="status-order-select"><SelectValue placeholder="Selecteaza comanda" /></SelectTrigger>
+            <SelectContent>{activeOrders.map((o) => <SelectItem key={o.id} value={o.id}>{o.order_number || o.id}</SelectItem>)}</SelectContent>
+          </Select>
+          {statusSelectedOrder && <p>{statusSelectedOrder.status}</p>}
+          {statusProbeVersioned && !statusRecovery.capability.enabled && <p role="status">{statusRecovery.capability.ready ? "Statusul versionat este dezactivat. Fluxul legacy este blocat." : "Disponibilitatea statusului versionat nu este confirmata."}</p>}
+          {statusSelectedOrder && canChangeOrderStatus(statusSelectedOrder, "CANCELLED", user) && <Textarea value={statusCancelReason} onChange={(e) => setStatusCancelReason(e.target.value)} maxLength={500} disabled={statusRecovery.blocked} placeholder="Motivul anularii" data-testid="admin-status-cancel-reason" />}
+          <DialogFooter className="flex-wrap gap-2">
+            {["ACCEPTED", "PICKED_UP", "DELIVERED", "CANCELLED"].filter((s) => canChangeOrderStatus(statusSelectedOrder, s, user)).map((s) => <Button key={s} variant={s === "CANCELLED" ? "destructive" : "default"} className="h-auto min-h-9 whitespace-normal" disabled={custodyBusy || !isOnline || isSimRunning || !statusRecovery.canSubmit(statusSelectedOrder) || (s === "CANCELLED" && !statusCancelReason.trim())} onClick={() => submitStatus(statusSelectedOrder, s, statusCancelReason.trim())} data-testid={`admin-status-${s.toLowerCase()}`}><CheckCircle2 className="mr-2 h-4 w-4" />{{ ACCEPTED: "Accepta", PICKED_UP: "Ridicata", DELIVERED: "Livrata", CANCELLED: "Anuleaza" }[s]}</Button>)}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <header className="sticky top-0 z-50 border-b bg-card/95 backdrop-blur-xl">
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-4 lg:px-6">
           <div className="flex min-w-0 items-center gap-3">
@@ -820,6 +1056,9 @@ const AdminDashboard = () => {
       </header>
 
       <main className="mx-auto w-full max-w-[1600px] px-3 py-4 sm:px-4 sm:py-5 lg:px-6 lg:py-6">
+        <CustodyRecoveryPanel recovery={custodyRecovery} isOnline={isOnline} onAcknowledged={() => { void fetchData(); setOrderReadReload((value) => value + 1); }} />
+        <OrderStatusRecoveryPanel recovery={statusRecovery} isOnline={isOnline} order={statusSelectedOrder}
+          onAcknowledged={() => fetchData({ silent: true })} onRetry={(fresh) => { setOrders((all) => all.map((o) => o.id === fresh.id ? fresh : o)); setStatusOrderId(fresh.id); setStatusDialogOpen(true); }} />
         <AdminCommandCenter
           stats={stats}
           activeDriversCount={activeDrivers.length}
@@ -833,7 +1072,7 @@ const AdminDashboard = () => {
         {/* Tabs */}
         <Tabs value={activeAdminTab} onValueChange={setActiveAdminTab} className="space-y-4">
           <TabsList className="admin-tabs-scroll flex h-auto w-full justify-start gap-1 overflow-x-auto rounded-xl border bg-card/90 p-1.5">
-            <TabsTrigger className="shrink-0 whitespace-nowrap px-3 py-2" value="orders" data-testid="tab-orders">Comenzi ({activeOrders.length})</TabsTrigger>
+            <TabsTrigger className="shrink-0 whitespace-nowrap px-3 py-2" value="orders" data-testid="tab-orders">Comenzi</TabsTrigger>
             <TabsTrigger className="shrink-0 whitespace-nowrap px-3 py-2" value="analytics" data-testid="tab-analytics">Analize</TabsTrigger>
             <TabsTrigger className="shrink-0 whitespace-nowrap px-3 py-2" value="map" data-testid="tab-map">Hartă</TabsTrigger>
             <TabsTrigger className="shrink-0 whitespace-nowrap px-3 py-2" value="drivers" data-testid="tab-drivers">Livratori ({drivers.length})</TabsTrigger>
@@ -844,7 +1083,19 @@ const AdminDashboard = () => {
 
           {/* Orders Tab */}
           <TabsContent value="orders">
-            <OrdersTab activeOrders={activeOrders} onAssignOrder={handleAssignOrder} />
+            <div className="mb-3 flex justify-end">
+              <Button variant="outline" size="sm" className="mr-2" onClick={() => setStatusDialogOpen(true)} data-testid="status-open-button"><CheckCircle2 className="mr-2 h-4 w-4" />Status comanda</Button>
+              <Button variant="outline" size="sm" data-testid="assign-open-button" onClick={() => {
+                if (!assignRecovery.record && !assignRecovery.busy && !assignBusyRef.current) {
+                  setSelectedOrder(null); setSelectedDriver(""); setAssignDriverSearch(""); setAssignOrderSearch(""); setIsOrderSelectionLocked(false);
+                }
+                setIsAssignDialogOpen(true);
+              }}><Truck className="mr-2 h-4 w-4" />Aloca / reasigna livrator</Button>
+            </div>
+            <OrdersTab activeOrders={activeOrders} onAssignOrder={handleAssignOrder} onInspectOrder={inspectOrder}
+              readContext={{ actorId: assignmentActor, role: user?.role, token, apiUrl: API_URL, isOnline,
+                restaurants, drivers, reloadKey: orderReadReload, pollKey: orderReadPoll, custodyRecovery, onCustodyAcknowledged: () => { void fetchData(); setOrderReadReload((value) => value + 1); }, custodyDisabled: Boolean(statusRecovery.record || statusRecovery.busy || editRecovery.record || editRecovery.busy || assignRecovery.record || assignRecovery.busy),
+                canCorrect: !custodyBusy && !editRecovery.busy && !editRecovery.record && !editRecovery.storageInvalid }} />
           </TabsContent>
 
           {/* Analytics Tab */}
@@ -1099,36 +1350,57 @@ const AdminDashboard = () => {
         </Tabs>
       </main>
 
+      {correctionDialog}
       {/* Assign Dialog */}
-      <Dialog open={isAssignDialogOpen} onOpenChange={(open) => { setIsAssignDialogOpen(open); if (!open) setIsOrderSelectionLocked(false); }}>
-        <DialogContent className="z-[1250] max-w-3xl" data-testid="assign-order-dialog">
+      <Dialog open={isAssignDialogOpen} onOpenChange={(open) => {
+        if (isAssigning || assignRecovery.busy) return;
+        setIsAssignDialogOpen(open); if (!open && !assignRecovery.record) setIsOrderSelectionLocked(false);
+      }}>
+        <DialogContent className="z-[1250] max-h-[calc(100dvh-2rem)] max-w-3xl overflow-y-auto" data-testid="assign-order-dialog">
           <DialogHeader>
             <DialogTitle>Alocă Comandă</DialogTitle>
             <DialogDescription>
-              Alege comanda și livratorul disponibil. Căutarea filtrează instant pentru flotă mare.
+              Alocare manuala sau reasignare inainte de acceptare.
             </DialogDescription>
           </DialogHeader>
+          {!isOnline && <p role="status">Fara internet. Trimiterea si verificarea sunt suspendate.</p>}
+          <RecoverySessionNotice recovery={assignRecovery} isOnline={isOnline} />
+          {!assignRecovery.available && <p role="alert">Sesiunea sau browserul nu permite protejarea alocarii intre taburi.</p>}
+          {!assignRecovery.record && assignmentVersioned && <p role="status" data-testid="assign-capability-state">
+            {!assignRecovery.capability.ready ? "Disponibilitatea alocarii versionate nu este confirmata." :
+              !assignRecovery.capability.enabled ? "Alocarea versionata este indisponibila. Comanda nu a fost modificata." : "Alocare versionata disponibila."}
+          </p>}
+          {!assignRecovery.record && selectedOrder && !isOrderAssignable(selectedOrder) && <p role="alert">Comanda nu este eligibila pentru alocare sau reasignare inainte de acceptare.</p>}
+          {(assignmentVersioned || assignRecovery.record || assignRecovery.errorCode) && assignRecovery.error && <p role="alert" data-testid="assign-recovery-error">{assignRecovery.error}</p>}
+          {assignRecovery.record && <div role="status" className="break-words text-sm" data-testid="assign-recovery-state">
+            {assignmentReceipt?.state === "rejected" ? `Alocarea a fost respinsa: ${assignmentReceipt.error_code}.` :
+              ["applied", "replayed"].includes(assignmentReceipt?.state) ? `Alocarea este confirmata, versiunea ${assignmentReceipt.order_version}.` :
+                "Alocare neconfirmata. Verifica aceeasi operatie; nu trimite o intentie noua."}
+            <p>Livrator: {drivers.find((d) => d.id === assignRecovery.record.driver_id)?.name || assignRecovery.record.driver_id}</p>
+          </div>}
           <div className="grid gap-4 lg:grid-cols-[1fr_1.1fr]">
             <div className="space-y-3">
               <Label>Comandă</Label>
-              {isOrderSelectionLocked && selectedOrder ? (
+              {isOrderSelectionLocked && assignmentDisplayOrder ? (
                 <div className="rounded-lg border border-indigo-300 bg-indigo-50 p-3 dark:bg-indigo-950/30" data-testid="assign-locked-order-summary">
-                  <div className="flex items-center justify-between gap-3"><span className="font-mono text-xs font-black">{selectedOrder.order_number}</span><Badge variant="outline">{selectedOrder.total_amount} RON</Badge></div>
-                  <p className="mt-1 font-semibold">{selectedOrder.restaurant_name}</p>
-                  <p className="truncate text-xs text-muted-foreground">{selectedOrder.customer_name} · {selectedOrder.customer_address}</p>
+                  <div className="flex flex-wrap items-center justify-between gap-3"><span className="break-all font-mono text-xs font-black">{assignmentDisplayOrder.order_number || assignmentDisplayOrder.id}</span>{assignmentDisplayOrder.total_amount != null && <Badge variant="outline">{orderAmountLabel(assignmentDisplayOrder)}: {clientCollectionText(assignmentDisplayOrder)}</Badge>}</div>
+                  <p className="mt-1 font-semibold">{assignmentDisplayOrder.restaurant_name}</p>
+                  <p className="truncate text-xs text-muted-foreground">{assignmentDisplayOrder.customer_name} · {assignmentDisplayOrder.customer_address}</p>
                   <p className="mt-2 text-xs font-medium text-indigo-700 dark:text-indigo-100">Comanda selectată inițial este păstrată automat.</p>
+                  {user?.role === "admin" && isOrderEditable(correctionSelectedOrder) && <Button disabled={assignmentFrozen} variant="outline" size="sm" className="mt-2 h-auto min-h-8 max-w-full whitespace-normal" onClick={() => { setIsAssignDialogOpen(false); inspectOrder(correctionSelectedOrder); }}><Pencil className="mr-2 h-4 w-4" />Corecteaza datele clientului</Button>}
                 </div>
               ) : (
                 <>
                   <div className="relative">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input value={assignOrderSearch} onChange={(event) => setAssignOrderSearch(event.target.value)} className="pl-9" placeholder="Caută după număr, client, restaurant" data-testid="assign-order-search-input" />
+                    <Input disabled={assignmentFrozen} value={assignOrderSearch} onChange={(event) => setAssignOrderSearch(event.target.value)} className="pl-9" placeholder="Caută după număr, client, restaurant" data-testid="assign-order-search-input" />
                   </div>
                   <div className="max-h-72 space-y-2 overflow-y-auto rounded-lg border bg-muted/20 p-2" data-testid="assign-order-options">
                     {filteredAssignableOrders.map((order) => (
-                      <button key={order.id} type="button" className={`w-full rounded-md border p-3 text-left transition-colors ${selectedOrder?.id === order.id ? "border-indigo-400 bg-indigo-50 dark:bg-indigo-950/30" : "bg-card hover:bg-muted/60"}`} onClick={() => setSelectedOrder(order)} data-testid={`assign-order-option-${order.id}`}>
-                        <div className="flex items-center justify-between gap-2"><span className="font-mono text-xs font-bold">{order.order_number}</span><Badge variant="outline" className="text-xs">{order.total_amount} RON</Badge></div>
+                      <button key={order.id} type="button" disabled={assignmentFrozen} className={`w-full rounded-md border p-3 text-left transition-colors disabled:opacity-55 ${selectedOrder?.id === order.id ? "border-indigo-400 bg-indigo-50 dark:bg-indigo-950/30" : "bg-card hover:bg-muted/60"}`} onClick={() => setSelectedOrder(order)} data-testid={`assign-order-option-${order.id}`}>
+                        <div className="flex items-center justify-between gap-2"><span className="font-mono text-xs font-bold">{order.order_number}</span><Badge variant="outline" className="text-xs">{orderAmountLabel(order)}: {clientCollectionText(order)}</Badge></div>
                         <p className="mt-1 text-sm font-semibold">{order.restaurant_name}</p><p className="truncate text-xs text-muted-foreground">{order.customer_name} · {order.customer_address}</p>
+                        {order.status === "ASSIGNED" && <p className="mt-1 text-xs text-muted-foreground">Reasignare: {order.driver_name || order.driver_id}</p>}
                       </button>
                     ))}
                     {filteredAssignableOrders.length === 0 && <p className="p-3 text-sm text-muted-foreground" data-testid="assign-order-empty-state">Nicio comandă disponibilă.</p>}
@@ -1141,6 +1413,7 @@ const AdminDashboard = () => {
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
+                  disabled={assignmentFrozen}
                   value={assignDriverSearch}
                   onChange={(event) => setAssignDriverSearch(event.target.value)}
                   autoFocus
@@ -1157,10 +1430,10 @@ const AdminDashboard = () => {
                   <button
                     key={driver.id}
                     type="button"
-                    disabled={!isAssignable}
+                    disabled={assignmentFrozen || !isAssignable || driver.id === selectedOrder?.driver_id}
                     className={`w-full rounded-md border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-55 ${getAssignDriverRowClass({ selected: selectedDriver === driver.id, assignable: isAssignable })}`}
                     onClick={() => {
-                      if (!isAssignable) return;
+                      if (assignmentFrozen || !isAssignable || driver.id === selectedOrder?.driver_id) return;
                       setSelectedDriver(driver.id);
                       setAssignDriverSearch(driver.name || "");
                     }}
@@ -1182,25 +1455,46 @@ const AdminDashboard = () => {
               </div>
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsAssignDialogOpen(false)} disabled={isAssigning} data-testid="assign-cancel-button">Anulează</Button>
-            <Button onClick={confirmAssign} disabled={isAssigning || !selectedOrder?.id || !selectedDriver || !isOnline} data-testid="assign-confirm-button">
-              {isAssigning ? "Se alocă..." : "Alocă"}
-            </Button>
+          <DialogFooter className="flex-wrap gap-2">
+            <Button variant="outline" onClick={() => setIsAssignDialogOpen(false)} disabled={isAssigning || assignRecovery.busy} data-testid="assign-cancel-button">{assignRecovery.record ? "Inchide" : "Anuleaza"}</Button>
+            {assignRecovery.record ? <>
+              {!assignmentTerminal(assignmentReceipt) && <Button className="h-auto min-h-9 whitespace-normal" onClick={assignRecovery.recover} disabled={assignRecovery.sessionSuspended || assignRecovery.busy || !isOnline || assignRecovery.storageInvalid || !assignRecovery.available} data-testid="assign-recover-button"><RefreshCw className="mr-2 h-4 w-4" />{assignRecovery.busy ? "Verific alocarea..." : "Verifica aceeasi alocare"}</Button>}
+              {assignmentReceipt?.state === "rejected" && <Button className="h-auto min-h-9 whitespace-normal" onClick={retryAssignment} disabled={assignRecovery.sessionSuspended || assignRecovery.busy || !isOnline || assignRecovery.storageInvalid} data-testid="assign-retry-button"><RefreshCw className="mr-2 h-4 w-4" />Reincarca pentru o noua incercare</Button>}
+              {assignmentTerminal(assignmentReceipt) && <Button className="h-auto min-h-9 whitespace-normal" onClick={acknowledgeAssignment} disabled={assignRecovery.sessionSuspended || assignRecovery.busy || assignRecovery.storageInvalid} data-testid="assign-acknowledge-button"><CheckCircle2 className="mr-2 h-4 w-4" />Confirma si inchide</Button>}
+            </> : <>
+              {assignmentVersioned && <Button variant="outline" onClick={assignRecovery.verifyCapability} disabled={assignRecovery.sessionSuspended || !isOnline || assignRecovery.checkingCapability || !assignRecovery.available} title="Verifica disponibilitatea alocarii" aria-label="Verifica disponibilitatea alocarii" data-testid="assign-capability-button"><RefreshCw className="h-4 w-4" /></Button>}
+              <Button onClick={confirmAssign} disabled={assignmentFrozen || !isOrderAssignable(selectedOrder) || !isAssignmentDriverAvailable(drivers.find((d) => d.id === selectedDriver)) || selectedDriver === selectedOrder?.driver_id || !isOnline || (assignmentVersioned && (!assignRecovery.capability.ready || !assignRecovery.capability.enabled))} data-testid="assign-confirm-button">
+                <Truck className="mr-2 h-4 w-4" />{isAssigning || assignRecovery.busy ? "Se aloca..." : selectedOrder?.status === "ASSIGNED" ? "Reasigna" : "Aloca"}
+              </Button>
+            </>}
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* New Order Dialog */}
-      <Dialog open={isNewOrderDialogOpen} onOpenChange={setIsNewOrderDialogOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
+      <Dialog open={isNewOrderDialogOpen} onOpenChange={(open) => {
+        if (!isCreatingOrder && !orderRecovery.busy) setIsNewOrderDialogOpen(open);
+      }}>
+        <DialogContent className="flex max-h-[calc(100dvh-2rem)] max-w-lg flex-col overflow-hidden">
+          <DialogHeader className="shrink-0">
             <DialogTitle>Comandă Nouă</DialogTitle>
             <DialogDescription>
               Completează comanda și selectează restaurantul pentru detectarea zonei corecte.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 max-h-[60vh] overflow-y-auto">
+          <RecoverySessionNotice recovery={orderRecovery} isOnline={isOnline} />
+          {orderRecovery.error && <p role="alert" className="shrink-0 text-sm text-destructive" data-testid="new-order-recovery-error">{orderRecovery.error}</p>}
+          {orderRecovery.record && (
+            <p role="status" className="shrink-0 text-sm break-words" data-testid="new-order-recovery-status">
+              {orderRecovery.record.receipt?.state === "rejected"
+                ? "Operația a fost respinsă. Poți corecta datele și începe o operație nouă."
+                : ["applied", "replayed"].includes(orderRecovery.record.receipt?.state)
+                  ? "Comanda este salvată. Pentru o altă comandă, începe o operație nouă."
+                  : "Comanda este neconfirmată. Verifică aceeași operație înainte de a trimite alta."}
+            </p>
+          )}
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <fieldset disabled={creationFrozen} inert={creationFrozen ? true : undefined} className="min-w-0 space-y-4" data-testid="new-order-fields">
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label>Restaurant *</Label>
@@ -1234,6 +1528,8 @@ const AdminDashboard = () => {
                             delivery_fee: 0,
                             total_amount: Number(newOrder.subtotal_amount || 0),
                           });
+                          detectZoneRequestRef.current += 1;
+                          setIsDetectingOrderZone(false);
                           setIsRestaurantPickerOpen(false);
                         }}
                         data-testid={`new-order-restaurant-option-${restaurant.id}`}
@@ -1289,14 +1585,16 @@ const AdminDashboard = () => {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label>Subtotal produse (RON) *</Label>
-                <Input type="number" value={newOrder.subtotal_amount} onChange={(e) => {
+                {financialForm.mode !== "legacy" ? <Input type="text" inputMode="decimal" value={rawProducts}
+                  onChange={(event) => setRawProducts(event.target.value)} placeholder="Introdu suma, inclusiv 0 explicit"
+                  data-testid="new-order-subtotal-input" /> : <Input type="number" value={newOrder.subtotal_amount} onChange={(e) => {
                   const subtotal = parseFloat(e.target.value) || 0;
                   setNewOrder({
                     ...newOrder,
                     subtotal_amount: subtotal,
                     total_amount: Number((subtotal + (newOrder.delivery_fee || 0)).toFixed(2)),
                   });
-                }} data-testid="new-order-subtotal-input" />
+                }} data-testid="new-order-subtotal-input" />}
               </div>
               <div>
                 <Label>Plată</Label>
@@ -1311,7 +1609,7 @@ const AdminDashboard = () => {
                 </Select>
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-4">
+            {financialForm.mode === "legacy" ? <div className="grid grid-cols-3 gap-4">
               <div>
                 <Label>Taxă livrare</Label>
                 <Input value={newOrder.delivery_fee} readOnly data-testid="new-order-delivery-fee" />
@@ -1324,24 +1622,39 @@ const AdminDashboard = () => {
                 <Label>Total final</Label>
                 <Input value={newOrder.total_amount} readOnly data-testid="new-order-total-amount" />
               </div>
-            </div>
+            </div> : <p className="text-sm" data-testid="financial-detected-zone">Zonă detectată: {newOrder.delivery_zone_name || "Selectează locația"}. Transportul se verifică în cotație.</p>}
             {newOrder.delivery_zone_name && (
               <div className="rounded-lg border bg-muted/40 p-3 text-sm" data-testid="new-order-zone-summary">
                 <p><strong>Restaurant:</strong> {restaurants.find((rest) => rest.id === newOrder.restaurant_id)?.name || "-"}</p>
                 <p><strong>Zonă:</strong> {newOrder.delivery_zone_name || "-"}</p>
-                <p><strong>Taxă aplicată:</strong> {newOrder.delivery_fee} lei</p>
+                {financialForm.mode === "legacy" && <p><strong>Taxă aplicată:</strong> {newOrder.delivery_fee} lei</p>}
               </div>
             )}
             <div>
               <Label>Observații</Label>
               <Textarea value={newOrder.notes} onChange={(e) => setNewOrder({...newOrder, notes: e.target.value})} data-testid="new-order-notes-input" />
             </div>
+            {financialForm.mode !== "legacy" && <OrderFinanceQuote finance={financialForm} disabled={creationFrozen || !isOnline || isDetectingOrderZone} />}
+            </fieldset>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsNewOrderDialogOpen(false)} disabled={isCreatingOrder} data-testid="new-order-cancel-button">Anulează</Button>
-            <Button onClick={createOrder} disabled={isCreatingOrder || isDetectingOrderZone || !isOnline} data-testid="new-order-submit-button">
-              {isCreatingOrder ? "Se creează..." : isDetectingOrderZone ? "Verific zona..." : "Creează Comandă"}
-            </Button>
+          <DialogFooter className="shrink-0 flex-wrap gap-2">
+            <Button variant="outline" onClick={() => setIsNewOrderDialogOpen(false)} disabled={isCreatingOrder || orderRecovery.busy} data-testid="new-order-cancel-button">{orderRecovery.record ? "Închide" : "Anulează"}</Button>
+            {orderRecovery.record ? (
+              ["applied", "replayed", "rejected"].includes(orderRecovery.record.receipt?.state)
+                ? <Button onClick={startAnotherOrder} disabled={orderRecovery.sessionSuspended || orderRecovery.busy} data-testid="new-order-another-button">{orderRecovery.record.receipt.state === "rejected" ? "Corectează comanda" : "Comandă nouă"}</Button>
+                : <Button onClick={orderRecovery.recover} disabled={orderRecovery.sessionSuspended || orderRecovery.busy || !isOnline} data-testid="new-order-recover-button">{orderRecovery.busy ? "Verific comanda..." : "Verifică rezultatul"}</Button>
+            ) : financialForm.mode === "legacy" && !orderRecovery.capability.ready ? (
+              <Button onClick={orderRecovery.verifyCapability} disabled={orderRecovery.sessionSuspended || !isOnline || orderRecovery.checkingCapability} data-testid="new-order-check-button">{orderRecovery.checkingCapability ? "Verific disponibilitatea..." : "Verifică disponibilitatea"}</Button>
+            ) : (
+              <Button onClick={createOrder} disabled={creationFrozen || isDetectingOrderZone || !isOnline || (financialForm.mode !== "legacy" && !financialForm.readyToSubmit)} data-testid="new-order-submit-button">
+                {isCreatingOrder ? "Se creează..." : isDetectingOrderZone ? "Verific zona..." : "Creează Comandă"}
+              </Button>
+            )}
+            {orderRecovery.record?.version === 2 && !["applied", "replayed", "rejected"].includes(orderRecovery.record.receipt?.state) && <>
+              <Button variant="outline" onClick={orderRecovery.retrySubmission} disabled={orderRecovery.sessionSuspended || orderRecovery.busy || !isOnline} data-testid="financial-retry">Retrimite aceeași comandă</Button>
+              {orderRecovery.record.receipt?.state === "pending" && <Button variant="outline" onClick={orderRecovery.resume} disabled={orderRecovery.sessionSuspended || orderRecovery.busy || !isOnline} data-testid="financial-resume">Continuă operația admisă</Button>}
+              <Button variant="outline" onClick={orderRecovery.closeIntent} disabled={orderRecovery.sessionSuspended || orderRecovery.busy || !isOnline} data-testid="financial-close">Închide identitatea neadmisă</Button>
+            </>}
           </DialogFooter>
         </DialogContent>
       </Dialog>

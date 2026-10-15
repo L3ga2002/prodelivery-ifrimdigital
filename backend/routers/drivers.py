@@ -1,7 +1,10 @@
 from fastapi import APIRouter, HTTPException, Depends, Query, UploadFile, File, Body, Response
 from datetime import datetime, timedelta, timezone
+from pymongo import ReturnDocument
+from pymongo.errors import PyMongoError
 import uuid
 import secrets
+import asyncio
 from database import db
 from auth import hash_password, verify_password, get_current_user
 from models.driver import (
@@ -18,6 +21,12 @@ from utils.driver_ranking import build_driver_ranking_payload
 from utils.email_service import EmailDeliveryError, send_driver_verification_email
 from utils.driver_ranking import ROMANIA_TZ
 from utils.avatar_storage import process_driver_avatar
+from utils.order_revision import ensure_legacy_order_scope, require_isolated_maintenance
+from utils.order_reads import OrderReadService, read_error, READ_TIMEOUT_SECONDS, MAX_TIME_MS, identifier
+from utils.order_financial_reads import private_read, signed_read_actor, OUTER_FIELDS, project_outer
+from types import SimpleNamespace
+from utils.financial_activity import public_activity_read, read_activity_failures, unavailable_activity_read
+from utils.custody_activity import public_custody_read, read_custody_failures, unavailable_custody_read
 
 router = APIRouter(prefix="/drivers", tags=["drivers"])
 DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
@@ -126,8 +135,17 @@ async def _ensure_admin_or_self(driver_id: str, current_user: dict) -> dict:
     raise HTTPException(status_code=403, detail="Not authorized")
 
 
-async def _attach_user_contact(driver: dict) -> dict:
-    user = await db.users.find_one({"id": driver.get("user_id")}, {"_id": 0})
+async def _attach_user_contact(driver: dict, *, read_service=None) -> dict:
+    if read_service is None:
+        user = await db.users.find_one({"id": driver.get("user_id")}, {"_id": 0})
+    else:
+        identifier(driver.get("user_id"))
+        rows = await read_service.outer_documents(db.users, {"id": driver["user_id"]}, OUTER_FIELDS["user_contact"])
+        if len(rows) > 1:
+            raise read_error(409, "USER_AMBIGUOUS")
+        user = project_outer(rows[0], "user_contact") if rows else None
+        if user is not None and user.get("id") != driver["user_id"]:
+            raise read_error(503, "READ_UNAVAILABLE")
     if not user:
         user = {}
     first_name, last_name = _split_driver_name(driver.get("name") or user.get("name"))
@@ -145,12 +163,17 @@ async def _attach_user_contact(driver: dict) -> dict:
     }
 
 
-async def _attach_today_schedule_state(driver: dict) -> dict:
+async def _attach_today_schedule_state(driver: dict, *, read_service=None) -> dict:
     week_start, day_key, current_hour = _current_week_and_day()
-    schedule = await db.schedules.find_one(
-        {"driver_id": driver["id"], "week_start": week_start},
-        {"_id": 0},
-    )
+    if read_service is None:
+        schedule = await db.schedules.find_one(
+            {"driver_id": driver["id"], "week_start": week_start}, {"_id": 0})
+    else:
+        rows = await read_service.outer_documents(db.schedules,
+            {"driver_id": driver["id"], "week_start": week_start}, OUTER_FIELDS["schedule"])
+        if len(rows) > 1:
+            raise read_error(409, "SCHEDULE_AMBIGUOUS")
+        schedule = project_outer(rows[0], "schedule") if rows else None
     today_slots = (schedule or {}).get("slots", {}).get(day_key, [])
     is_scheduled_today = len(today_slots) > 0
     is_on_shift_now = any(slot.get("start") == current_hour for slot in today_slots)
@@ -316,24 +339,43 @@ async def get_driver(driver_id: str, current_user: dict = Depends(get_current_us
     return await _ensure_admin_or_self(driver_id, current_user)
 
 
-@router.get("/{driver_id}/dashboard")
-async def get_driver_dashboard(driver_id: str, current_user: dict = Depends(get_current_user)):
-    driver = await _attach_user_contact(await _ensure_admin_or_self(driver_id, current_user))
-    ranking = await build_driver_ranking_payload(db, driver)
-    schedule_state = await _attach_today_schedule_state(driver)
-    schedules = await db.schedules.find({"driver_id": driver_id}, {"_id": 0}).sort("week_start", -1).to_list(24)
-    orders = await db.orders.find({"driver_id": driver_id}, {"_id": 0}).sort("created_at", -1).to_list(25)
-    avatars = await db.driver_avatars.find({"driver_id": driver_id, "is_deleted": False}, {"_id": 0}).sort("uploaded_at", -1).to_list(20)
-    audit_logs = []
-    if current_user["role"] == "admin":
-        audit_logs = await db.audit_logs.find({"entity_type": "driver", "entity_id": driver_id}, {"_id": 0}).sort("created_at", -1).to_list(30)
-    return {
-        "driver": {**schedule_state, **ranking},
-        "schedules": schedules,
-        "recent_orders": orders,
-        "avatars": avatars,
-        "audit_logs": audit_logs,
-    }
+@private_read(router, "/{driver_id}/dashboard")
+async def get_driver_dashboard(driver_id: str, current_user: dict = Depends(signed_read_actor)):
+    service = OrderReadService(db)
+    async def execute():
+        identifier(driver_id)
+        context = await service.authorize_read(current_user)
+        if context.role != "admin" and (context.role != "driver" or context.driver_id != driver_id):
+            raise read_error(403, "NOT_AUTHORIZED")
+        rows = await service.outer_documents(db.drivers, {"id": driver_id}, OUTER_FIELDS["driver"])
+        if len(rows) != 1:
+            raise read_error(404 if not rows else 409, "DRIVER_NOT_FOUND" if not rows else "DRIVER_AMBIGUOUS")
+        driver = project_outer(rows[0], "driver")
+        if driver.get("id") != driver_id:
+            raise read_error(503, "READ_UNAVAILABLE")
+        driver = await _attach_user_contact(driver, read_service=service)
+        class Counts:
+            async def count_documents(self, query):
+                value = await db.orders.count_documents(query, maxTimeMS=MAX_TIME_MS)
+                if type(value) is not int or value < 0:
+                    raise read_error(503, "READ_UNAVAILABLE")
+                return value
+        ranking = await build_driver_ranking_payload(SimpleNamespace(orders=Counts()), driver)
+        schedule_state = await _attach_today_schedule_state(driver, read_service=service)
+        schedules = [project_outer(row, "schedule") for row in await service.outer_documents(
+            db.schedules, {"driver_id": driver_id}, OUTER_FIELDS["schedule"], limit=24, sort={"week_start": -1})]
+        documents = await service.load_orders(context, query={"driver_id": driver_id}, limit=25, sort={"created_at": -1}, compatibility=True)
+        orders, _ = await service.serialize_orders(documents, context, compatibility=True)
+        avatars = [project_outer(row, "avatar") for row in await service.outer_documents(db.driver_avatars,
+            {"driver_id": driver_id, "is_deleted": False}, OUTER_FIELDS["avatar"], limit=20, sort={"uploaded_at": -1})]
+        audit_logs = []
+        if context.role == "admin":
+            audit_logs = [project_outer(row, "driver_audit") for row in await service.outer_documents(db.audit_logs,
+                {"entity_type": "driver", "entity_id": driver_id}, OUTER_FIELDS["driver_audit"], limit=30, sort={"created_at": -1})]
+        await service.revalidate_read(context)
+        return {"driver": {**schedule_state, **ranking}, "schedules": schedules,
+            "recent_orders": orders, "avatars": avatars, "audit_logs": audit_logs}
+    return await service._bounded(execute)
 
 
 @router.patch("/{driver_id}/profile")
@@ -518,6 +560,8 @@ async def disable_driver_account(driver_id: str, data: DriverDisableUpdate | Non
     driver = await db.drivers.find_one({"id": driver_id}, {"_id": 0})
     if not driver:
         raise HTTPException(status_code=404, detail="Driver not found")
+    if driver.get("current_order_id") is not None:
+        raise HTTPException(status_code=409, detail="Livratorul are o rezervare activa. Reasigneaza sau verifica alocarea inainte de dezactivare.")
     active_orders = await db.orders.count_documents({"driver_id": driver_id, "status": {"$nin": ["DELIVERED", "CANCELLED"]}})
     if active_orders > 0:
         raise HTTPException(status_code=409, detail="Livratorul are comenzi active. Reasignează sau finalizează comenzile înainte de dezactivare.")
@@ -532,8 +576,22 @@ async def disable_driver_account(driver_id: str, data: DriverDisableUpdate | Non
         "break_started_at": None,
         "break_until": None,
     }
-    await db.drivers.update_one({"id": driver_id}, {"$set": update})
-    await db.users.update_one({"id": driver.get("user_id")}, {"$set": update})
+    snapshot = {name: {"$eq": driver[name]} if name in driver else {"$exists": False}
+                for name in ("current_order_id", "driver_status", "is_active", "account_disabled", "user_id")}
+    changed = await db.drivers.find_one_and_update(
+        {"id": driver_id, **snapshot}, {"$set": update},
+        return_document=ReturnDocument.AFTER, projection={"_id": 0},
+    )
+    if changed is None:
+        raise HTTPException(status_code=409, detail={"code": "DRIVER_STATE_CONFLICT", "message": "Livratorul a fost modificat intre timp. Reincarca starea."})
+    try:
+        user_result = await db.users.update_one({"id": driver.get("user_id")}, {"$set": update})
+        matched = getattr(user_result, "matched_count", user_result.get("matched_count", 0) if isinstance(user_result, dict) else 0)
+        if matched != 1:
+            raise HTTPException(status_code=503, detail={"code": "DRIVER_DISABLE_INCOMPLETE", "message": "Livratorul este blocat pentru alocare, dar contul necesita reconciliere. Reincearca dezactivarea."})
+    except PyMongoError:
+        # Keep the driver blocked; reverting here could race a later operator action.
+        raise HTTPException(status_code=503, detail={"code": "DRIVER_DISABLE_INCOMPLETE", "message": "Livratorul este blocat pentru alocare, dar contul necesita reconciliere. Reincearca dezactivarea."}) from None
     await _log_driver_audit(driver_id, current_user, "driver_account_disabled", update)
     return {"message": "Cont livrator dezactivat", "driver_id": driver_id}
 
@@ -584,6 +642,8 @@ async def delete_driver(
         raise HTTPException(status_code=403, detail="Admin only")
     if not confirm_delete:
         raise HTTPException(status_code=409, detail="Confirmă explicit ștergerea livratorului")
+    require_isolated_maintenance(db)
+    await ensure_legacy_order_scope(db, {"driver_id": driver_id})
     driver = await db.drivers.find_one({"id": driver_id}, {"_id": 0})
     if not driver:
         raise HTTPException(status_code=404, detail="Driver not found")
@@ -606,7 +666,7 @@ async def delete_driver(
 
     schedules_result = await db.schedules.delete_many({"driver_id": driver_id})
     await db.orders.update_many(
-        {"driver_id": driver_id},
+        {"driver_id": driver_id, "order_version": {"$exists": False}},
         {"$set": {"driver_deleted": True, "driver_deleted_name": driver.get("name")}},
     )
     driver_result = await db.drivers.delete_one({"id": driver_id})
@@ -708,15 +768,22 @@ async def update_driver_status(
         update["break_started_at"] = now.isoformat()
         update["break_until"] = (now + timedelta(minutes=minutes)).isoformat()
     elif status == "active":
-        update["current_order_id"] = driver.get("current_order_id")
         update["last_online_at"] = now.isoformat()
     elif status != "break":
         update["break_started_at"] = None
         update["break_until"] = None
-    await db.drivers.update_one(
-        {"id": driver_id},
-        {"$set": update}
+    # A stale availability read must not overwrite a concurrent assignment.
+    snapshot = {name: {"$eq": driver[name]} if name in driver else {"$exists": False}
+                for name in ("current_order_id", "driver_status", "is_active", "account_disabled")}
+    updated = await db.drivers.find_one_and_update(
+        {"id": driver_id, **snapshot}, {"$set": update},
+        return_document=ReturnDocument.AFTER, projection={"_id": 0},
     )
+    if updated is None:
+        raise HTTPException(status_code=409, detail={
+            "code": "DRIVER_STATE_CONFLICT",
+            "message": "Livratorul a fost modificat intre timp. Reincarca starea inainte de a continua.",
+        })
     if current_user["role"] == "admin":
         await _log_driver_audit(driver_id, current_user, "driver_status_updated", update)
     return {"message": "Status updated", "operational_status": status, "is_active": update["is_active"]}

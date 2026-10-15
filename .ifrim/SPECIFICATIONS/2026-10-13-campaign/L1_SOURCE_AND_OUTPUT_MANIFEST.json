@@ -1,0 +1,255 @@
+{
+  "id": "PD-CAMPAIGN-20261013-L1",
+  "version": "1.0-candidate",
+  "generated_utc": "2026-10-13T03:09:19.7122182Z",
+  "project_root": "C:\\Users\\mihai\\OneDrive\\Desktop\\Ifrim Digital Proiecte\\ProDelivery",
+  "output_root": "C:\\Users\\mihai\\OneDrive\\Documente\\Mutare Proiecte de pe Emergent\\pd-campaign-20261013\\l1",
+  "status": "owner_documentary_candidate_review_qa_pending",
+  "active_project_modified_by_l1": false,
+  "application_tests_run": false,
+  "device_accessed": false,
+  "runtime_or_database_started": false,
+  "sources": [
+    {
+      "relative_path": ".ifrim/NEXT_SESSION.md",
+      "bytes": 91986,
+      "sha256": "8DBE74630D07E34B579177E3528FBD93F934465ED054A0D259F4183A6A6B990C",
+      "hash_observed_utc": "2026-10-13T03:09:19.5311917Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": ".ifrim/AGENTS.md",
+      "bytes": 4857,
+      "sha256": "8B986D75F3B44188C610E5D2F8A2131F5FB516141DEB9F4B2A3D1F287C0FA2AE",
+      "hash_observed_utc": "2026-10-13T03:09:19.5391214Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": ".ifrim/EXECUTION_PLAN_2026-09-26.md",
+      "bytes": 17368,
+      "sha256": "E6DFE53423249670A5FBB8118AC3991F39D5E3C7682DFF59526A0AEEF2CA9DD9",
+      "hash_observed_utc": "2026-10-13T03:09:19.5493482Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": ".ifrim/LOOP_REPORTS/2026-10-08-client-operational-rules-intake.md",
+      "bytes": 9543,
+      "sha256": "84E0F59F8B197785BAAFDA6E21C69EE66A6C25B29FE05F413CBBBDD1CB7F01BB",
+      "hash_observed_utc": "2026-10-13T03:09:19.5511457Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": ".ifrim/LOOP_REPORTS/2026-10-09-client-operational-rules-followup.md",
+      "bytes": 9071,
+      "sha256": "DAC6110FD47299DCBBA1149730B670E01BF2D4CE3EF0DE270AB986BF39B4139D",
+      "hash_observed_utc": "2026-10-13T03:09:19.5531198Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": ".ifrim/LOOP_REPORTS/2026-10-12-client-operational-rules-third-set.md",
+      "bytes": 13072,
+      "sha256": "C37E78ACD96A437B0C03A4228B8A8B858B7F3E4C357717107FE51976D868A319",
+      "hash_observed_utc": "2026-10-13T03:09:19.5550238Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": ".ifrim/LOOP_REPORTS/2026-10-12-developer-answers-gradual-pilot.md",
+      "bytes": 3033,
+      "sha256": "AB084608C4B14442F5BCAB0C8F5617CE993B665D789512DDB3BCB8D657CD6425",
+      "hash_observed_utc": "2026-10-13T03:09:19.5625459Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": ".ifrim/LOOP_REPORTS/2026-10-10-stage12-independent-closure.md",
+      "bytes": 32364,
+      "sha256": "96BAD8D9168D55F9C536369592B0876B5FE78B01FE7D4E3750F5134B13E45005",
+      "hash_observed_utc": "2026-10-13T03:09:19.5644979Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": ".ifrim/LOOP_REPORTS/2026-10-11-restaurant-refactor-final.md",
+      "bytes": 5047,
+      "sha256": "C97AFDBD4F55D7D0ADD6904C1EF65B0591BA17CE819D5A4612C09B0C71ECE9B0",
+      "hash_observed_utc": "2026-10-13T03:09:19.5740021Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": ".ifrim/LOOP_REPORTS/2026-10-11-stage1-d0-inventory.md",
+      "bytes": 2089,
+      "sha256": "EEB63BE9BB14DCA1AB3B92D9D53BE02AA7ACA95CD45411484717EB5063A98D70",
+      "hash_observed_utc": "2026-10-13T03:09:19.5818350Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": ".ifrim/SPECIFICATIONS/PD-DISPATCH-01.md",
+      "bytes": 30459,
+      "sha256": "0D55718DB0BA94399338C9C7B9E438DE1BC298632D68D06277374841755C41C1",
+      "hash_observed_utc": "2026-10-13T03:09:19.5836921Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": ".ifrim/SPECIFICATIONS/2026-10-11-PD-DISPATCH-01-current-addendum.md",
+      "bytes": 9786,
+      "sha256": "3ACA170DF7820709E56D6FA05C1A14ADAF97979E01B7486D411F784B20A77681",
+      "hash_observed_utc": "2026-10-13T03:09:19.5851707Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": ".ifrim/SPECIFICATIONS/PD-ORDER-MUTATION-CONTRACTS.md",
+      "bytes": 3383,
+      "sha256": "4D26D805C36F448D329AB8026F43E90FC34CA70302741A726B8826998950815A",
+      "hash_observed_utc": "2026-10-13T03:09:19.5929065Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": ".ifrim/SPECIFICATIONS/PD-ORDER-STATUS-RECOVERY.md",
+      "bytes": 4262,
+      "sha256": "E5C972921D5F1DCEED32BF962CAB9FD8503C1FE1FDF3AA75F8961DA530CFBD5D",
+      "hash_observed_utc": "2026-10-13T03:09:19.6024878Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": ".ifrim/SPECIFICATIONS/PD-ORDER-ASSIGN-RECOVERY.md",
+      "bytes": 4638,
+      "sha256": "F9CB1C794A37A9CE6EAE25DEAAB46FB53086456B1DE300A8B437591D677B6F24",
+      "hash_observed_utc": "2026-10-13T03:09:19.6119213Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": ".ifrim/TASK_PACKETS/2026-10-10-prodelivery-master-roadmap.md",
+      "bytes": 26993,
+      "sha256": "9A210D45EB9BB6BED9F491283A6B072F785C04CF3BDDB3AFBA7A67195342D4B1",
+      "hash_observed_utc": "2026-10-13T03:09:19.6224296Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": "backend/models/order.py",
+      "bytes": 6738,
+      "sha256": "93B7DD6B4604EACDBD0092F4EC359AF8D791A419495153DFB3BF2B5F58363B88",
+      "hash_observed_utc": "2026-10-13T03:09:19.6248000Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": "backend/models/driver.py",
+      "bytes": 2489,
+      "sha256": "5E82BA2252226892D40A88BB72EA4509F34051528B2DF5683FE304D3CB4E38E7",
+      "hash_observed_utc": "2026-10-13T03:09:19.6263343Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": "backend/routers/orders.py",
+      "bytes": 52328,
+      "sha256": "8F215AE7C2B6D9336A029EE52C96BCDED91D23A0B1D94FE51E7DE3FA403ABD7F",
+      "hash_observed_utc": "2026-10-13T03:09:19.6279649Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": "backend/routers/drivers.py",
+      "bytes": 35456,
+      "sha256": "1B6F53950D71886F05B38C50D795E186E1F9011DEB9D6BD5A10D75163C0C363B",
+      "hash_observed_utc": "2026-10-13T03:09:19.6292451Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": "backend/routers/restaurants.py",
+      "bytes": 17179,
+      "sha256": "3A2906A3C841F74C1BB893949884B48A04F3B4D1B7E77FCE6CB89F213168E093",
+      "hash_observed_utc": "2026-10-13T03:09:19.6308903Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": "backend/utils/order_creation.py",
+      "bytes": 24471,
+      "sha256": "D53E6266E558DAA404E4530D614CF38732CBDA72B318DE36F3ACD03BD45A67A7",
+      "hash_observed_utc": "2026-10-13T03:09:19.6325361Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": "backend/utils/order_status.py",
+      "bytes": 39496,
+      "sha256": "CC314C60A14C07B46818414DC27C1A373C2F935C2361A9BF624EF75B34057CA4",
+      "hash_observed_utc": "2026-10-13T03:09:19.6341879Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    },
+    {
+      "relative_path": "frontend/src/pages/DriverApp.jsx",
+      "bytes": 50430,
+      "sha256": "FBD447378744ADB74ABEBA1B630FC9633A2E2753619F7A974E17CC3CB8D28BD4",
+      "hash_observed_utc": "2026-10-13T03:09:19.6356800Z",
+      "evidence_kind": "static_read_or_documentary_reference",
+      "scope": "bounded_read_no_runtime_execution"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "L1_TASK_PACKET.md",
+      "absolute_path": "C:\\Users\\mihai\\OneDrive\\Documente\\Mutare Proiecte de pe Emergent\\pd-campaign-20261013\\l1\\L1_TASK_PACKET.md",
+      "bytes": 10057,
+      "lines": 88,
+      "sha256": "20EB05A3B0B429F7A39821860BB4F3BFB46C118E923B890E6EEC330403C4620E"
+    },
+    {
+      "name": "L1_REQUIREMENTS_DELTA_MATRIX.md",
+      "absolute_path": "C:\\Users\\mihai\\OneDrive\\Documente\\Mutare Proiecte de pe Emergent\\pd-campaign-20261013\\l1\\L1_REQUIREMENTS_DELTA_MATRIX.md",
+      "bytes": 15256,
+      "lines": 63,
+      "sha256": "E79F1774ED83B04129A6BFFA11F360EC7C56C736F0FBD690A7CBB565F78716CE"
+    },
+    {
+      "name": "L1_PROPOSED_SPEC_ADDITIONS.md",
+      "absolute_path": "C:\\Users\\mihai\\OneDrive\\Documente\\Mutare Proiecte de pe Emergent\\pd-campaign-20261013\\l1\\L1_PROPOSED_SPEC_ADDITIONS.md",
+      "bytes": 11409,
+      "lines": 85,
+      "sha256": "AD4A8CCB96B7CA34CF9085F1DC261B2F67A32D03DC3CA7878456EE19BF38B6D6"
+    }
+  ],
+  "structural_checks": {
+    "strict_utf8": true,
+    "replacement_characters": 0,
+    "client_q_rows": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "10",
+      "11"
+    ],
+    "exact_integration_anchors_found": 3,
+    "output_documents": 3
+  },
+  "limitations": [
+    "Source hashes identify bounded reads at manifest creation; no whole-project integrity or live-state audit claimed.",
+    "Historical test counts are documentary evidence, not L1 reruns.",
+    "Exact subsequent 18-question grid unavailable; no mapping or answers invented.",
+    "Commercial stages 1 and 2 remain open; stage 7 is not closed by A0-A8 or D0.",
+    "Source edits and NEXT_SESSION integration belong to ROOT after distinct review and QA."
+  ]
+}

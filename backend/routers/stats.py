@@ -10,7 +10,7 @@ router = APIRouter(prefix="/stats", tags=["stats"])
 @router.get("")
 async def get_stats(current_user: dict = Depends(get_current_user)):
     total_orders = await db.orders.count_documents({})
-    active_orders = await db.orders.count_documents({"status": {"$nin": ["DELIVERED"]}})
+    active_orders = await db.orders.count_documents({"status": {"$nin": ["DELIVERED", "CANCELLED"]}})
     delivered_orders = await db.orders.count_documents({"status": "DELIVERED"})
     active_drivers = await db.drivers.count_documents({"is_active": True})
     total_drivers = await db.drivers.count_documents({})

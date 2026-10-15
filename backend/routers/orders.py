@@ -1,14 +1,26 @@
 import re
+import asyncio
 import logging
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header, Request, Response, Query
+from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from datetime import datetime, timedelta, timezone
 from pymongo import ReturnDocument
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, PyMongoError
 from shapely.geometry import Point, Polygon
 from database import db
 from auth import get_current_user
+from utils.order_revision import ensure_legacy_order, revision_filter, revision_update
+from utils.order_finance import FinanceError, guard_generic_problem_link
+from utils.order_assignment import MULTI_FIELDS
+from utils.order_reads import OrderReadService, read_error, READ_TIMEOUT_SECONDS
+from utils.order_financial_reads import private_read, signed_read_actor
+from utils.order_finance import FinanceError, order_financial_snapshot
+from utils.financial_activity import public_activity_read, read_activity_failures, unavailable_activity_read
+from utils.custody_activity import public_custody_read, read_custody_failures, unavailable_custody_read
 from models.order import (
     ORDER_STATUS_VALUES,
     Order,
@@ -25,7 +37,7 @@ logger = logging.getLogger(__name__)
 VALID_ORDER_STATUSES = list(ORDER_STATUS_VALUES)
 MIN_PREP_WHEN_NO_DRIVERS = 20
 RESTAURANT_MUTATION_STATUSES = {"CANCELLED"}
-DRIVER_MUTATION_STATUSES = {"ACCEPTED", "PICKED_UP", "DELIVERED", "CANCELLED"}
+DRIVER_MUTATION_STATUSES = {"ACCEPTED", "PICKED_UP", "DELIVERED"}
 GENERIC_STATUS_ENDPOINT_STATUSES = {"ACCEPTED", "PICKED_UP", "DELIVERED", "CANCELLED"}
 ASSIGNABLE_ORDER_STATUSES = {"NEW", "PREPARING", "READY", "ASSIGNED"}
 ORDER_STATUS_TRANSITIONS = {
@@ -34,12 +46,15 @@ ORDER_STATUS_TRANSITIONS = {
     "READY": {"ASSIGNED", "CANCELLED"},
     "ASSIGNED": {"ACCEPTED", "CANCELLED"},
     "ACCEPTED": {"PICKED_UP", "CANCELLED"},
-    "PICKED_UP": {"DELIVERED", "CANCELLED"},
+    "PICKED_UP": {"DELIVERED"},
     "DELIVERED": set(),
     "CANCELLED": set(),
 }
 ORDER_COUNTER_ID = "orders.global"
 ORDER_NUMBER_RE = re.compile(r"^[^.]+\.(\d+)")
+LEGACY_PREPARATION_TIMESTAMP_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])?$"
+)
 
 
 def _normalize_order_source(source: str | None) -> str:
@@ -69,16 +84,29 @@ def _order_audit_entry(action: str, current_user: dict, changes: dict | None = N
     }
 
 
-def _update_with_order_audit(set_data: dict, action: str, current_user: dict, changes: dict | None = None) -> dict:
-    return {
+def _update_with_order_audit(set_data: dict, action: str, current_user: dict, changes: dict | None = None, *, order: dict) -> dict:
+    entry = _order_audit_entry(action, current_user, changes)
+    if action in {"order.preparing_started", "order.ready"}:
+        # Read original DB origin only; never accept an audit source from the request.
+        entry["source"] = order.get("source") if isinstance(order.get("source"), str) else None
+        entry["request_id"] = str(uuid.uuid4())
+        # Server CAS event identity, not a new client recovery intent.
+        entry["operation_ref"] = "order-audit:" + entry["id"]
+        entry["from_order_version"] = order.get("order_version")
+        entry["to_order_version"] = int(order["order_version"]) + 1 if "order_version" in order else None
+    if "order_version" in order:
+        entry["from_order_version"] = int(order["order_version"])
+        entry["to_order_version"] = int(order["order_version"]) + 1
+    return revision_update(order, {
         "$set": set_data,
-        "$push": {"audit_trail": _order_audit_entry(action, current_user, changes)},
-    }
+        "$push": {"audit_trail": entry},
+    })
 
 
 def _order_filter_for_loaded_order(order: dict) -> dict:
     current_driver = order.get("driver_id")
     query = {"id": order["id"], "status": order.get("status")}
+    query.update(revision_filter(order))
     if current_driver:
         query["driver_id"] = current_driver
     else:
@@ -86,8 +114,80 @@ def _order_filter_for_loaded_order(order: dict) -> dict:
     return query
 
 
-async def _record_order_audit_log(order_id: str, action: str, current_user: dict, changes: dict | None = None) -> None:
+def _preparation_status_for_order(order: dict) -> str:
+    status = order.get("status")
+    if status not in VALID_ORDER_STATUSES:
+        raise HTTPException(status_code=409, detail="Comanda are un status invalid")
+    preparation_status = order.get("preparation_status")
+    if preparation_status is not None:
+        if not isinstance(preparation_status, str) or preparation_status not in {"NEW", "PREPARING", "READY"}:
+            raise HTTPException(status_code=409, detail="Comanda are date de pregătire invalide")
+    if status in {"NEW", "PREPARING", "READY"}:
+        return status
+    if preparation_status is not None:
+        return preparation_status
+    # Legacy dispatch status replaced preparation status; retained timestamps recover it.
+    for field in ("preparation_started_at", "preparation_ready_at"):
+        value = order.get(field)
+        if value is None:
+            continue
+        valid_format = isinstance(value, datetime) or (
+            isinstance(value, str) and LEGACY_PREPARATION_TIMESTAMP_RE.fullmatch(value)
+        )
+        if not valid_format or _parse_datetime(value) is None:
+            raise HTTPException(status_code=409, detail="Comanda are date de pregătire invalide; verifică manual")
+    if order.get("preparation_ready_at") is not None:
+        return "READY"
+    if order.get("preparation_started_at") is not None:
+        return "PREPARING"
+    return "NEW"
+
+
+def _preparation_snapshot_filter(order: dict) -> dict:
+    query = _order_filter_for_loaded_order(order)
+    query["restaurant_id"] = order.get("restaurant_id")
+    for field in ("preparation_status", "preparation_started_at", "preparation_ready_at", "preparation_due_at"):
+        query[field] = order.get(field)
+    return query
+
+
+def _ensure_preparation_mutable(order: dict) -> None:
+    status = order.get("status")
+    if not isinstance(status, str) or status not in {"NEW", "PREPARING", "READY", "ASSIGNED", "ACCEPTED"}:
+        raise HTTPException(status_code=409, detail="Pregătirea nu mai poate fi modificată pentru această comandă")
+
+
+async def _has_usable_assigned_driver(order: dict) -> bool:
+    if order.get("status") not in {"ASSIGNED", "ACCEPTED"} or not order.get("driver_id"):
+        return False
+    return bool(await db.drivers.find_one({
+        "id": order["driver_id"],
+        "current_order_id": order["id"],
+        "driver_status": "delivery",
+        "is_active": True,
+        "account_disabled": {"$ne": True},
+    }, {"_id": 0, "id": 1}))
+
+
+async def _record_order_audit_log(order_id: str, action: str, current_user: dict, changes: dict | None = None, *, event: dict | None = None) -> None:
     try:
+        if event is not None:
+            # Immutable projection of the already committed embedded event.
+            projected = {"_id": event["id"], **event, "entity_type": "order", "entity_id": order_id}
+            async with asyncio.timeout(2):
+                existing = await db.audit_logs.find_one({"_id": event["id"]})
+                if existing is not None:
+                    if existing != projected:
+                        raise RuntimeError("audit_projection_conflict")
+                    return
+                try:
+                    await db.audit_logs.insert_one(projected)
+                except DuplicateKeyError:
+                    # A concurrent duplicate can only replay the identical immutable event.
+                    existing = await db.audit_logs.find_one({"_id": event["id"]})
+                    if existing != projected:
+                        raise RuntimeError("audit_projection_conflict")
+            return
         await db.audit_logs.insert_one({
             "id": str(uuid.uuid4()),
             "entity_type": "order",
@@ -98,19 +198,56 @@ async def _record_order_audit_log(order_id: str, action: str, current_user: dict
             "performed_by_role": current_user.get("role"),
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
-    except Exception:
-        logger.exception("Failed to write order audit log for order_id=%s action=%s", order_id, action)
+    except Exception as error:
+        logger.error("order_audit_write_failed order_id=%s action=%s error_type=%s", order_id, action, type(error).__name__)
+
+
+async def _project_preparation_event(order: dict, action: str, actor: dict) -> None:
+    entries = order.get("audit_trail", [])
+    if not isinstance(entries, list):
+        return
+    event = next((entry for entry in reversed(entries) if isinstance(entry, dict) and entry.get("action") == action), None)
+    if event is None:
+        return
+    event_id, request_id = event.get("id"), event.get("request_id")
+    # Only the new immutable lineage can repair its deterministic projection.
+    # Historical events used unrelated global IDs and require an explicit migration.
+    try:
+        if not isinstance(event_id, str) or str(uuid.UUID(event_id)) != event_id:
+            return
+        if not isinstance(request_id, str) or str(uuid.UUID(request_id)) != request_id:
+            return
+    except (ValueError, AttributeError):
+        return
+    if event.get("operation_ref") != "order-audit:" + event_id:
+        return
+    await _record_order_audit_log(order["id"], action, actor, event=event)
 
 
 def _log_order_action(action: str, order_id: str, current_user: dict, changes: dict | None = None) -> None:
+    # Diagnostic logs carry state metadata, never arbitrary customer/free-text values.
+    safe_changes = {key: value for key, value in (changes or {}).items()
+                    if key in {"status", "from_status", "to_status", "from_preparation_status", "to_preparation_status"}
+                    and isinstance(value, str) and value in VALID_ORDER_STATUSES}
     logger.info(
         "order_action=%s order_id=%s actor_role=%s actor_id=%s changes=%s",
         action,
         order_id,
         current_user.get("role"),
         current_user.get("user_id") or current_user.get("id"),
-        changes or {},
+        safe_changes,
     )
+
+
+def _expected_actor_context(current_user: dict, expected_actor_id: str | None) -> None:
+    if expected_actor_id is None:
+        return
+    if (not isinstance(expected_actor_id, str) or not 1 <= len(expected_actor_id) <= 120
+        or expected_actor_id != expected_actor_id.strip()
+        or any(ord(char) < 32 or ord(char) == 127 for char in expected_actor_id)):
+        raise HTTPException(status_code=422, detail={"code": "INVALID_ACTOR_ID", "message": "Identitate invalida."})
+    if expected_actor_id != (current_user.get("user_id") or current_user.get("id")):
+        raise HTTPException(status_code=403, detail={"code": "AUTH_CONTEXT_CHANGED", "message": "Sesiunea s-a schimbat. Pastreaza identitatea operatiei."})
 
 
 def _ensure_order_transition_allowed(order: dict, next_status: str) -> bool:
@@ -129,8 +266,7 @@ def _ensure_order_transition_allowed(order: dict, next_status: str) -> bool:
 
 def _ensure_restaurant_accepts_new_orders(restaurant: dict) -> None:
     pause_until = _parse_datetime(restaurant.get("pause_until"))
-    if restaurant.get("closed_today"):
-        raise HTTPException(status_code=409, detail="Restaurantul este închis pentru ziua curentă")
+    # Accounting close alone does not suspend operational order admission.
     if restaurant.get("accepting_orders") is False:
         if pause_until:
             raise HTTPException(status_code=409, detail="Restaurantul este în pauză și nu acceptă comenzi noi")
@@ -187,9 +323,12 @@ def _orders_query_for_user(current_user: dict) -> dict:
 
 def _format_order_dates(order: dict) -> dict:
     if isinstance(order.get("created_at"), str):
-        order["created_at"] = datetime.fromisoformat(order["created_at"])
+        order["created_at"] = _parse_datetime(order["created_at"])
     if isinstance(order.get("updated_at"), str):
-        order["updated_at"] = datetime.fromisoformat(order["updated_at"])
+        order["updated_at"] = _parse_datetime(order["updated_at"])
+    for field in ("created_at", "updated_at"):
+        if order.get(field) is not None and not isinstance(order[field], datetime):
+            order[field] = None
     return order
 
 
@@ -291,8 +430,13 @@ async def load_order_for_status_update(order_id: str) -> dict | None:
 async def clear_driver_assignment(order: dict | None) -> None:
     if order and order.get("driver_id"):
         await db.drivers.update_one(
-            {"id": order["driver_id"]},
-            {"$set": {"current_order_id": None, "driver_status": "active", "is_active": True}}
+            {"id": order["driver_id"], "current_order_id": order["id"], "driver_status": "delivery",
+             "is_active": True, "account_disabled": {"$ne": True}},
+            {"$set": {"current_order_id": None, "driver_status": "active"}}
+        )
+        await db.drivers.update_one(
+            {"id": order["driver_id"], "current_order_id": order["id"]},
+            {"$set": {"current_order_id": None}}
         )
 
 
@@ -310,59 +454,120 @@ async def finalize_delivered_order(order: dict | None) -> None:
         await db.drivers.update_one(
             {"id": order["driver_id"]},
             {
-                "$set": {"current_order_id": None, "driver_status": "active", "is_active": True},
                 "$inc": {"total_deliveries": 1, "total_earnings": order.get("total_amount", 0) * 0.1}
             }
         )
+        await clear_driver_assignment(order)
 
 
-@router.get("")
-async def get_orders(current_user: dict = Depends(get_current_user)):
-    orders = await db.orders.find(_orders_query_for_user(current_user), {"_id": 0}).to_list(1000)
-    return [_format_order_dates(order) for order in orders]
+async def _has_committed_driver_assignment(order: dict | None, driver_id: str) -> bool:
+    if not order or order.get("driver_id") != driver_id or order.get("status") not in ("ASSIGNED", "ACCEPTED", "PICKED_UP"):
+        return False
+    return bool(await db.drivers.find_one({
+        "id": driver_id, "current_order_id": order["id"],
+    }, {"_id": 0, "id": 1}))
 
 
-@router.get("/driver/{driver_id}")
-async def get_driver_orders(driver_id: str, current_user: dict = Depends(get_current_user)):
-    if current_user.get("role") != "admin" and not (
-        current_user.get("role") == "driver" and current_user.get("driver_id") == driver_id
-    ):
-        raise HTTPException(status_code=403, detail="Not authorized")
-    orders = await db.orders.find(
-        {"driver_id": driver_id, "status": {"$nin": ["DELIVERED"]}},
-        {"_id": 0}
-    ).to_list(100)
-    return orders
+def _financial_read_order(order: dict) -> dict:
+    """Keep legacy fields, but never present an invalid financial quote as payable."""
+    if "financial" not in order and "financial_contract_version" not in order:
+        return {**public_activity_read(order), **{k: v for k, v in public_custody_read(order).items() if k.startswith("custody_") or k.startswith("read_")}}
+    result = dict(order)
+    try:
+        snapshot = order_financial_snapshot(order)
+        result.update(financial=snapshot.model_dump(mode="json"), financial_contract_version=1)
+    except FinanceError:
+        result.update(financial=None, financial_contract_version=None,
+                      read_financial_invalid=True, read_actions_unavailable=True)
+        logger.warning("order_read_financial_invalid")
+    return {**public_activity_read(result), **{k: v for k, v in public_custody_read(result).items() if k.startswith("custody_") or k.startswith("read_")}}
 
 
-@router.get("/restaurant/{restaurant_id}")
-async def get_restaurant_orders(restaurant_id: str, current_user: dict = Depends(get_current_user)):
-    if current_user.get("role") != "admin" and not (
-        current_user.get("role") == "restaurant" and current_user.get("restaurant_id") == restaurant_id
-    ):
-        raise HTTPException(status_code=403, detail="Not authorized")
-    orders = await db.orders.find(
-        {"restaurant_id": restaurant_id},
-        {"_id": 0}
-    ).sort("created_at", -1).to_list(100)
-    return orders
+async def _financial_read_orders(orders):
+    try:
+        async with asyncio.timeout(READ_TIMEOUT_SECONDS):
+            invalid = await read_activity_failures(db, orders)
+            custody_invalid = await read_custody_failures(db, orders)
+            values = [_financial_read_order(order) for order in orders]
+            for index in custody_invalid:
+                unavailable_custody_read(values[index])
+            for index in invalid:
+                unavailable_activity_read(values[index])
+            return values
+    except (TimeoutError, PyMongoError):
+        raise read_error(503, "READ_UNAVAILABLE") from None
 
 
-@router.get("/{order_id}")
-async def get_order(order_id: str, current_user: dict = Depends(get_current_user)):
-    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
-    _ensure_order_read_allowed(order, current_user)
-    return order
+@private_read(router, "")
+async def get_orders(current_user: dict = Depends(signed_read_actor)):
+    return await OrderReadService(db).compatibility(current_user)
+
+
+@private_read(router, "/driver/{driver_id}")
+async def get_driver_orders(driver_id: str, current_user: dict = Depends(signed_read_actor)):
+    return await OrderReadService(db).compatibility(current_user, kind="driver", identifier_value=driver_id)
+
+
+@private_read(router, "/restaurant/{restaurant_id}")
+async def get_restaurant_orders(restaurant_id: str, current_user: dict = Depends(signed_read_actor)):
+    return await OrderReadService(db).compatibility(current_user, kind="restaurant", identifier_value=restaurant_id)
+
+
+_read_security = HTTPBearer(auto_error=False)
+
+
+async def _order_read_actor(request: Request):
+    return await signed_read_actor(request)
+
+
+def _order_read_query(request, names):
+    if (any(name not in names or len(request.query_params.getlist(name)) != 1 for name in request.query_params)
+        or len(request.headers.getlist("X-Expected-Actor-ID")) > 1):
+        raise read_error(422, "INVALID_REQUEST")
+
+
+@private_read(router, "/read/page")
+async def read_order_page(request: Request, response: Response, view: str = "active", status: str | None = None,
+                          restaurant_id: str | None = None, driver_id: str | None = None,
+                          from_date: str | None = None, to_date: str | None = None, limit: str = "25",
+                          cursor: str | None = None, current_user: dict = Depends(_order_read_actor),
+                          expected_actor_id: Annotated[str | None, Header(alias="X-Expected-Actor-ID")] = None):
+    response.headers["Cache-Control"] = "no-store"
+    _order_read_query(request, {"view", "status", "restaurant_id", "driver_id", "from_date", "to_date", "limit", "cursor"})
+    return await OrderReadService(db).page(current_user, expected_actor_id=expected_actor_id, view=view, status=status,
+        restaurant_id=restaurant_id, driver_id=driver_id, from_date=from_date, to_date=to_date, limit=limit, cursor=cursor)
+
+
+@private_read(router, "/read/detail/{order_id:path}")
+async def read_order_detail(order_id: str, request: Request, response: Response, history_before: str | None = None,
+                            history_limit: str = "25", current_user: dict = Depends(_order_read_actor),
+                            expected_actor_id: Annotated[str | None, Header(alias="X-Expected-Actor-ID")] = None):
+    response.headers["Cache-Control"] = "no-store"
+    _order_read_query(request, {"history_before", "history_limit"})
+    return await OrderReadService(db).detail(current_user, order_id, expected_actor_id=expected_actor_id,
+                                            history_before=history_before, history_limit=history_limit)
+
+
+@private_read(router, "/{order_id}")
+async def get_order(order_id: str, current_user: dict = Depends(signed_read_actor)):
+    return await OrderReadService(db).compatibility(current_user, kind="one", identifier_value=order_id)
 
 
 @router.post("")
-async def create_order(order_data: OrderCreate, current_user: dict = Depends(get_current_user)):
+async def create_order(
+    order_data: OrderCreate, current_user: dict = Depends(get_current_user),
+    expected_actor_id: Annotated[str | None, Header(alias="X-Expected-Actor-ID")] = None,
+):
+    _expected_actor_context(current_user, expected_actor_id)
     if current_user.get("role") not in ["admin", "restaurant"]:
         raise HTTPException(status_code=403, detail="Not authorized")
     if current_user.get("role") == "restaurant" and current_user.get("restaurant_id") != order_data.restaurant_id:
         raise HTTPException(status_code=403, detail="Not authorized")
+
+    try:
+        await guard_generic_problem_link(db, order_data)
+    except FinanceError as exc:
+        raise HTTPException(exc.status_code, detail={"code": exc.code, "message": exc.message}) from None
 
     restaurant = await db.restaurants.find_one({"id": order_data.restaurant_id}, {"_id": 0})
     if not restaurant:
@@ -382,6 +587,7 @@ async def create_order(order_data: OrderCreate, current_user: dict = Depends(get
 
     order = Order(
         order_number=order_number,
+        preparation_status="NEW",
         source=order_data.source,
         restaurant_id=order_data.restaurant_id,
         restaurant_name=restaurant["name"],
@@ -419,9 +625,17 @@ async def create_order(order_data: OrderCreate, current_user: dict = Depends(get
 
 
 @router.put("/{order_id}/assign")
-async def assign_order(order_id: str, data: AssignOrder, current_user: dict = Depends(get_current_user)):
+async def assign_order(order_id: str, data: AssignOrder, current_user: dict = Depends(get_current_user),
+                       expected_actor_id: Annotated[str | None, Header(alias="X-Expected-Actor-ID")] = None):
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
+    if expected_actor_id is not None:
+        if (not isinstance(expected_actor_id, str) or not 1 <= len(expected_actor_id) <= 120
+            or expected_actor_id != expected_actor_id.strip()
+            or any(ord(char) < 32 or ord(char) == 127 for char in expected_actor_id)):
+            raise HTTPException(status_code=422, detail={"code": "INVALID_ACTOR_ID", "message": "Identitate invalida."})
+        if expected_actor_id != (current_user.get("user_id") or current_user.get("id")):
+            raise HTTPException(status_code=403, detail={"code": "AUTH_CONTEXT_CHANGED", "message": "Sesiunea s-a schimbat. Pastreaza identitatea operatiei."})
 
     driver = await db.drivers.find_one({"id": data.driver_id}, {"_id": 0})
     if not driver:
@@ -433,9 +647,15 @@ async def assign_order(order_id: str, data: AssignOrder, current_user: dict = De
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
+    if any(name in order or name in driver for name in MULTI_FIELDS):
+        raise HTTPException(status_code=409, detail={"code": "ASSIGNMENT_REPRESENTATION_UNSUPPORTED", "message": "Asignarea necesita un protocol compatibil."})
+    ensure_legacy_order(order)
     current_status = order.get("status")
     old_driver_id = order.get("driver_id")
+    preparation_status = _preparation_status_for_order(order)
     if current_status == "ASSIGNED" and old_driver_id == data.driver_id:
+        if not await _has_committed_driver_assignment(order, data.driver_id):
+            raise HTTPException(status_code=409, detail="Alocarea este inconsistentă și trebuie verificată manual")
         _log_order_action("order.assign.duplicate", order_id, current_user, {"driver_id": data.driver_id})
         return {"message": "Order already assigned", "idempotent": True}
 
@@ -447,9 +667,24 @@ async def assign_order(order_id: str, data: AssignOrder, current_user: dict = De
     if current_status != "ASSIGNED":
         _ensure_order_transition_allowed(order, "ASSIGNED")
 
+    if (driver.get("is_active") is not True or ("driver_status" in driver
+        and (not isinstance(driver["driver_status"], str) or driver["driver_status"] != "active"))):
+        raise HTTPException(status_code=409, detail={"code": "DRIVER_NOT_AVAILABLE", "message": "Livratorul nu este activ si disponibil."})
+    for field in ("break_started_at", "break_until"):
+        value = driver.get(field)
+        if value is not None:
+            try:
+                if not isinstance(value, str) or value != value.strip() or "T" not in value:
+                    raise ValueError("Invalid timestamp")
+                datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=409, detail={"code": "DRIVER_DATA_INVALID", "message": "Datele pauzei necesita verificare."}) from None
+
     current_driver_order = driver.get("current_order_id")
     if current_driver_order and current_driver_order != order_id:
         raise HTTPException(status_code=409, detail="Livratorul are deja o comandă activă")
+    if current_driver_order == order_id:
+        raise HTTPException(status_code=409, detail="Alocarea este în curs sau inconsistentă. Reîncarcă și încearcă din nou.")
 
     now = datetime.now(timezone.utc)
     changes = {
@@ -458,15 +693,30 @@ async def assign_order(order_id: str, data: AssignOrder, current_user: dict = De
         "old_driver_id": old_driver_id,
         "new_driver_id": data.driver_id,
     }
+    if not isinstance(driver.get("name"), str) or not driver["name"].strip():
+        raise HTTPException(status_code=409, detail="Livratorul are date invalide")
+    assignment_filter = _preparation_snapshot_filter(order)
+    assignment_update = _update_with_order_audit(
+        {
+            "driver_id": data.driver_id,
+            "driver_name": driver["name"],
+            "status": "ASSIGNED",
+            "preparation_status": preparation_status,
+            "assigned_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+        },
+        "order.assigned", current_user, changes, order=order,
+    )
 
     claimed_driver = await db.drivers.find_one_and_update(
         {
             "id": data.driver_id,
             "account_disabled": {"$ne": True},
+            "is_active": {"$eq": True},
+            "driver_status": {"$eq": driver["driver_status"]} if "driver_status" in driver else {"$exists": False},
             "$or": [
                 {"current_order_id": None},
                 {"current_order_id": {"$exists": False}},
-                {"current_order_id": order_id},
             ],
         },
         {"$set": {"current_order_id": order_id, "driver_status": "delivery", "is_active": True}},
@@ -474,42 +724,32 @@ async def assign_order(order_id: str, data: AssignOrder, current_user: dict = De
         projection={"_id": 0},
     )
     if not claimed_driver:
+        latest_order = await load_order_for_status_update(order_id)
+        if latest_order:
+            ensure_legacy_order(latest_order)
+        if await _has_committed_driver_assignment(latest_order, data.driver_id):
+            _log_order_action("order.assign.duplicate", order_id, current_user, {"driver_id": data.driver_id})
+            return {"message": "Order already assigned", "idempotent": True}
         raise HTTPException(status_code=409, detail="Livratorul nu mai este disponibil pentru alocare")
 
     updated_order = await db.orders.find_one_and_update(
-        _order_filter_for_loaded_order(order),
-        _update_with_order_audit(
-            {
-                "driver_id": data.driver_id,
-                "driver_name": driver["name"],
-                "status": "ASSIGNED",
-                "assigned_at": now.isoformat(),
-                "updated_at": now.isoformat(),
-            },
-            "order.assigned",
-            current_user,
-            changes,
-        ),
+        assignment_filter,
+        assignment_update,
         return_document=ReturnDocument.AFTER,
         projection={"_id": 0},
     )
     if not updated_order:
-        if current_driver_order != order_id:
-            await db.drivers.update_one(
-                {"id": data.driver_id, "current_order_id": order_id},
-                {"$set": {"current_order_id": None, "driver_status": "active", "is_active": True}},
-            )
         latest_order = await load_order_for_status_update(order_id)
-        if latest_order and latest_order.get("status") == "ASSIGNED" and latest_order.get("driver_id") == data.driver_id:
+        if latest_order:
+            ensure_legacy_order(latest_order)
+        if await _has_committed_driver_assignment(latest_order, data.driver_id):
             _log_order_action("order.assign.duplicate", order_id, current_user, {"driver_id": data.driver_id})
             return {"message": "Order already assigned", "idempotent": True}
+        await clear_driver_assignment({"id": order_id, "driver_id": data.driver_id})
         raise HTTPException(status_code=409, detail="Comanda a fost modificată între timp. Reîncarcă și încearcă din nou.")
 
     if old_driver_id and old_driver_id != data.driver_id:
-        await db.drivers.update_one(
-            {"id": old_driver_id, "current_order_id": order_id},
-            {"$set": {"current_order_id": None, "driver_status": "active", "is_active": True}},
-        )
+        await clear_driver_assignment({"id": order_id, "driver_id": old_driver_id})
 
     await _record_order_audit_log(order_id, "order.assigned", current_user, changes)
     _log_order_action("order.assigned", order_id, current_user, changes)
@@ -517,48 +757,66 @@ async def assign_order(order_id: str, data: AssignOrder, current_user: dict = De
 
 
 @router.put("/{order_id}/preparing")
-async def set_preparing(order_id: str, data: PreparationTime, current_user: dict = Depends(get_current_user)):
+async def set_preparing(
+    order_id: str, data: PreparationTime, current_user: dict = Depends(get_current_user),
+    expected_actor_id: Annotated[str | None, Header(alias="X-Expected-Actor-ID")] = None,
+):
+    _expected_actor_context(current_user, expected_actor_id)
     order = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     _ensure_restaurant_order_mutation_allowed(order, current_user)
-    if order.get("status") == "PREPARING":
+    revision_filter(order)
+    _ensure_preparation_mutable(order)
+    preparation_status = _preparation_status_for_order(order)
+    if preparation_status == "PREPARING":
+        await _project_preparation_event(order, "order.preparing_started", current_user)
         _log_order_action("order.preparing.duplicate", order_id, current_user, {"status": "PREPARING"})
         return {
             "message": "Order already preparing",
             "preparation_due_at": order.get("preparation_due_at"),
             "idempotent": True,
         }
-    _ensure_order_transition_allowed(order, "PREPARING")
+    if preparation_status != "NEW":
+        raise HTTPException(status_code=409, detail="Comanda este deja gata; pregătirea nu poate fi reluată")
+    next_status = "PREPARING" if order.get("status") == "NEW" else order["status"]
 
     available_drivers = await get_available_driver_count()
-    if available_drivers == 0 and data.preparation_time < MIN_PREP_WHEN_NO_DRIVERS:
+    assigned_driver_available = await _has_usable_assigned_driver(order)
+    if available_drivers == 0 and not assigned_driver_available and data.preparation_time < MIN_PREP_WHEN_NO_DRIVERS:
         raise HTTPException(status_code=409, detail=f"Nu există livratori disponibili acum. Setează minimum {MIN_PREP_WHEN_NO_DRIVERS} minute sau așteaptă un livrator activ.")
     now = datetime.now(timezone.utc)
     estimated_seconds = data.preparation_time * 60
     due_at = now + timedelta(seconds=estimated_seconds)
     changes = {
         "from_status": order.get("status"),
-        "to_status": "PREPARING",
+        "to_status": next_status,
+        "from_preparation_status": preparation_status,
+        "to_preparation_status": "PREPARING",
         "preparation_time": data.preparation_time,
         "preparation_due_at": due_at.isoformat(),
     }
     updated_order = await db.orders.find_one_and_update(
-        {"id": order_id, "status": "NEW"},
+        _preparation_snapshot_filter(order),
         _update_with_order_audit({
-            "status": "PREPARING",
+            "status": next_status,
+            "preparation_status": "PREPARING",
             "preparation_time": data.preparation_time,
             "preparation_estimated_seconds": estimated_seconds,
             "preparation_started_at": now.isoformat(),
             "preparation_due_at": due_at.isoformat(),
             "updated_at": now.isoformat()
-        }, "order.preparing_started", current_user, changes),
+        }, "order.preparing_started", current_user, changes, order=order),
         return_document=ReturnDocument.AFTER,
         projection={"_id": 0},
     )
     if not updated_order:
         latest_order = await load_order_for_status_update(order_id)
-        if latest_order and latest_order.get("status") == "PREPARING":
+        if latest_order:
+            _ensure_restaurant_order_mutation_allowed(latest_order, current_user)
+            revision_filter(latest_order)
+        if latest_order and latest_order.get("status") in {"PREPARING", "ASSIGNED", "ACCEPTED"} and _preparation_status_for_order(latest_order) == "PREPARING":
+            await _project_preparation_event(latest_order, "order.preparing_started", current_user)
             _log_order_action("order.preparing.duplicate", order_id, current_user, {"status": "PREPARING"})
             return {
                 "message": "Order already preparing",
@@ -567,7 +825,7 @@ async def set_preparing(order_id: str, data: PreparationTime, current_user: dict
             }
         raise HTTPException(status_code=409, detail="Comanda a fost modificată între timp. Reîncarcă și încearcă din nou.")
 
-    await _record_order_audit_log(order_id, "order.preparing_started", current_user, changes)
+    await _project_preparation_event(updated_order, "order.preparing_started", current_user)
     _log_order_action("order.preparing_started", order_id, current_user, changes)
     return {"message": "Order preparing", "preparation_due_at": due_at.isoformat()}
 
@@ -593,6 +851,7 @@ async def create_problem_order(order_id: str, data: ProblemOrderCreate, current_
     if not original:
         raise HTTPException(status_code=404, detail="Order not found")
     _ensure_restaurant_order_mutation_allowed(original, current_user)
+    ensure_legacy_order(original)
     if original.get("status") != "DELIVERED":
         raise HTTPException(status_code=409, detail="Doar comenzile livrate pot avea refaceri parțiale")
     if original.get("has_problem_followup"):
@@ -608,6 +867,7 @@ async def create_problem_order(order_id: str, data: ProblemOrderCreate, current_
     subtotal = max(float(data.price), 0) * max(int(data.quantity), 1)
     order = Order(
         order_number=await _next_order_number(original.get("source", "S"), "P"),
+        preparation_status="NEW",
         source=original.get("source", "S"),
         restaurant_id=original["restaurant_id"],
         restaurant_name=original["restaurant_name"],
@@ -636,17 +896,31 @@ async def create_problem_order(order_id: str, data: ProblemOrderCreate, current_
     doc["updated_at"] = doc["updated_at"].isoformat()
     await db.orders.insert_one(doc)
     doc.pop("_id", None)
-    await db.orders.update_one({"id": order_id}, {"$set": {"has_problem_followup": True, "updated_at": datetime.now(timezone.utc).isoformat()}})
+    result = await db.orders.update_one(
+        {"id": order_id, **revision_filter(original)},
+        {"$set": {"has_problem_followup": True, "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    matched = result.get("matched_count", 0) if isinstance(result, dict) else result.matched_count
+    if not matched:
+        raise HTTPException(status_code=409, detail="Comanda initiala a fost modificata; verifica refacerea creata.")
     return {"message": "Comandă legată creată", "order": doc}
 
 
 @router.put("/{order_id}/ready")
-async def set_ready(order_id: str, current_user: dict = Depends(get_current_user)):
+async def set_ready(
+    order_id: str, current_user: dict = Depends(get_current_user),
+    expected_actor_id: Annotated[str | None, Header(alias="X-Expected-Actor-ID")] = None,
+):
+    _expected_actor_context(current_user, expected_actor_id)
     order = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     _ensure_restaurant_order_mutation_allowed(order, current_user)
-    if order.get("status") == "READY":
+    revision_filter(order)
+    _ensure_preparation_mutable(order)
+    preparation_status = _preparation_status_for_order(order)
+    if preparation_status == "READY":
+        await _project_preparation_event(order, "order.ready", current_user)
         _log_order_action("order.ready.duplicate", order_id, current_user, {"status": "READY"})
         return {
             "message": "Order already ready",
@@ -654,40 +928,59 @@ async def set_ready(order_id: str, current_user: dict = Depends(get_current_user
             "preparation_delay_seconds": order.get("preparation_delay_seconds", 0),
             "idempotent": True,
         }
-    _ensure_order_transition_allowed(order, "READY")
+    if preparation_status != "PREPARING":
+        raise HTTPException(status_code=409, detail="Setează timpul de pregătire înainte de a marca această comandă gata")
+    next_status = "READY" if order.get("status") == "PREPARING" else order["status"]
 
     now = datetime.now(timezone.utc)
     started_at_raw = order.get("preparation_started_at")
-    estimated_seconds = order.get("preparation_estimated_seconds") or ((order.get("preparation_time") or 0) * 60)
+    estimated_seconds = order.get("preparation_estimated_seconds")
+    if estimated_seconds is None:
+        minutes = order.get("preparation_time")
+        if minutes is not None and (type(minutes) is not int or not 1 <= minutes <= 240):
+            raise HTTPException(status_code=409, detail="Comanda are un timp de pregătire invalid")
+        estimated_seconds = (minutes or 0) * 60
+    if type(estimated_seconds) is not int or not 0 <= estimated_seconds <= 240 * 60:
+        raise HTTPException(status_code=409, detail="Comanda are o estimare de pregătire invalidă")
     actual_seconds = None
     delay_seconds = 0
     if started_at_raw:
         started_at = _parse_datetime(started_at_raw)
-        if started_at:
-            actual_seconds = max(int((now - started_at).total_seconds()), 0)
-            delay_seconds = max(actual_seconds - estimated_seconds, 0)
+        if not started_at:
+            raise HTTPException(status_code=409, detail="Comanda are o dată de pregătire invalidă")
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+        actual_seconds = max(int((now - started_at).total_seconds()), 0)
+        delay_seconds = max(actual_seconds - estimated_seconds, 0)
 
     changes = {
         "from_status": order.get("status"),
-        "to_status": "READY",
+        "to_status": next_status,
+        "from_preparation_status": preparation_status,
+        "to_preparation_status": "READY",
         "preparation_actual_seconds": actual_seconds,
         "preparation_delay_seconds": delay_seconds,
     }
     updated_order = await db.orders.find_one_and_update(
-        {"id": order_id, "status": "PREPARING"},
+        _preparation_snapshot_filter(order),
         _update_with_order_audit({
-            "status": "READY",
+            "status": next_status,
+            "preparation_status": "READY",
             "preparation_ready_at": now.isoformat(),
             "preparation_actual_seconds": actual_seconds,
             "preparation_delay_seconds": delay_seconds,
             "updated_at": now.isoformat()
-        }, "order.ready", current_user, changes),
+        }, "order.ready", current_user, changes, order=order),
         return_document=ReturnDocument.AFTER,
         projection={"_id": 0},
     )
     if not updated_order:
         latest_order = await load_order_for_status_update(order_id)
-        if latest_order and latest_order.get("status") == "READY":
+        if latest_order:
+            _ensure_restaurant_order_mutation_allowed(latest_order, current_user)
+            revision_filter(latest_order)
+        if latest_order and latest_order.get("status") in {"READY", "ASSIGNED", "ACCEPTED"} and _preparation_status_for_order(latest_order) == "READY":
+            await _project_preparation_event(latest_order, "order.ready", current_user)
             _log_order_action("order.ready.duplicate", order_id, current_user, {"status": "READY"})
             return {
                 "message": "Order already ready",
@@ -697,13 +990,21 @@ async def set_ready(order_id: str, current_user: dict = Depends(get_current_user
             }
         raise HTTPException(status_code=409, detail="Comanda a fost modificată între timp. Reîncarcă și încearcă din nou.")
 
-    await _record_order_audit_log(order_id, "order.ready", current_user, changes)
+    await _project_preparation_event(updated_order, "order.ready", current_user)
     _log_order_action("order.ready", order_id, current_user, changes)
     return {"message": "Order ready", "preparation_actual_seconds": actual_seconds, "preparation_delay_seconds": delay_seconds}
 
 
 @router.put("/{order_id}/status")
-async def update_order_status(order_id: str, data: UpdateOrderStatus, current_user: dict = Depends(get_current_user)):
+async def update_order_status(order_id: str, data: UpdateOrderStatus, current_user: dict = Depends(get_current_user),
+                              expected_actor_id: Annotated[str | None, Header(alias="X-Expected-Actor-ID")] = None):
+    if expected_actor_id is not None:
+        if (not isinstance(expected_actor_id, str) or not 1 <= len(expected_actor_id) <= 120
+            or expected_actor_id != expected_actor_id.strip()
+            or any(ord(char) < 32 or ord(char) == 127 for char in expected_actor_id)):
+            raise HTTPException(status_code=422, detail={"code": "INVALID_ACTOR_ID", "message": "Identitate invalida."})
+        if expected_actor_id != (current_user.get("user_id") or current_user.get("id")):
+            raise HTTPException(status_code=403, detail={"code": "AUTH_CONTEXT_CHANGED", "message": "Sesiunea s-a schimbat. Pastreaza identitatea operatiei."})
     if data.status not in GENERIC_STATUS_ENDPOINT_STATUSES:
         raise HTTPException(status_code=400, detail="Folosește endpoint-ul dedicat pentru acest status")
 
@@ -711,11 +1012,17 @@ async def update_order_status(order_id: str, data: UpdateOrderStatus, current_us
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     _ensure_status_mutation_allowed(order, data.status, current_user)
+    ensure_legacy_order(order)
+    if data.status == "CANCELLED" and order.get("status") in {"PICKED_UP", "DELIVERED"}:
+        raise HTTPException(status_code=409, detail={"code": "CUSTODY_RESOLUTION_REQUIRED", "message": "Comanda ridicata necesita rezolvarea custodiei; anularea directa este blocata."})
 
     should_update = _ensure_order_transition_allowed(order, data.status)
     if not should_update:
         _log_order_action("order.status.duplicate", order_id, current_user, {"status": data.status})
         return {"message": "Status already applied", "idempotent": True}
+
+    if data.status == "PICKED_UP" and _preparation_status_for_order(order) != "READY":
+        raise HTTPException(status_code=409, detail="Restaurantul trebuie să marcheze comanda gata înainte de ridicare")
 
     now = datetime.now(timezone.utc)
     update_data = build_status_update_payload(data, current_user, now)
@@ -727,13 +1034,16 @@ async def update_order_status(order_id: str, data: UpdateOrderStatus, current_us
         changes["cancellation_reason"] = data.cancellation_reason
 
     updated_order = await db.orders.find_one_and_update(
-        {"id": order_id, "status": order.get("status")},
-        _update_with_order_audit(update_data, "order.status_changed", current_user, changes),
+        _preparation_snapshot_filter(order),
+        _update_with_order_audit(update_data, "order.status_changed", current_user, changes, order=order),
         return_document=ReturnDocument.AFTER,
         projection={"_id": 0},
     )
     if not updated_order:
         latest_order = await load_order_for_status_update(order_id)
+        if latest_order:
+            _ensure_status_mutation_allowed(latest_order, data.status, current_user)
+            ensure_legacy_order(latest_order)
         if latest_order and latest_order.get("status") == data.status:
             _log_order_action("order.status.duplicate", order_id, current_user, {"status": data.status})
             return {"message": "Status already applied", "idempotent": True}
@@ -748,3 +1058,17 @@ async def update_order_status(order_id: str, data: UpdateOrderStatus, current_us
     await _record_order_audit_log(order_id, "order.status_changed", current_user, changes)
     _log_order_action("order.status_changed", order_id, current_user, changes)
     return {"message": "Status updated"}
+
+
+@router.get("/{order_id}/incidents")
+async def get_order_incidents(order_id: str, actor: dict = Depends(get_current_user),
+    limit: int = Query(default=50, ge=1, le=100), cursor: str | None = Query(default=None, max_length=512),
+    expected_actor_id: Annotated[str | None, Header(alias="X-Expected-Actor-ID")] = None):
+    from utils.operational_reporting import OperationalReportingService, ReportingError
+    _expected_actor_context(actor, expected_actor_id)
+    try:
+        return JSONResponse(await OperationalReportingService(db, "incident").incidents(order_id, actor, limit, cursor),
+                            headers={"Cache-Control": "no-store"})
+    except ReportingError as error:
+        raise HTTPException(status_code=error.status_code, detail={"code": error.code, "message": error.message},
+                            headers={"Cache-Control": "no-store"}) from None

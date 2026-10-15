@@ -1,0 +1,98 @@
+PRODELIVERY — GRILĂ NOUĂ PENTRU CLIENT, 14 OCTOMBRIE 2026
+Alocarea comenzilor, gruparea și evidența banilor
+
+Te rog să alegi o singură variantă A/B/C/D la fiecare întrebare, de exemplu 1.B, 2.A. Minutele din variante sunt propuneri; devin reguli numai după răspunsul tău. Dacă o variantă nu descrie procedura firmei, scrie regula exactă lângă numărul întrebării.
+
+1. Când trimitem livratorul către restaurant?
+A. Numai după ce restaurantul confirmă că produsele sunt gata.
+B. În timpul pregătirii, astfel încât sosirea estimată să coincidă cu momentul când produsele vor fi gata.
+C. Imediat după acceptarea comenzii de către restaurant, chiar dacă produsele sunt încă în pregătire, respectând limita de așteptare.
+D. Când restaurantul apasă separat „Cheamă livratorul”.
+
+2. Dacă gruparea comenzilor ar depăși limita de așteptare sau de întârziere stabilită pentru produse, cine poate aproba excepția?
+A. Nimeni; căutăm o rută care respectă limitele, iar dacă nu există, anunțăm administratorul.
+B. Administratorul, numai cu acordul restaurantului pentru comanda afectată.
+C. Restaurantul pentru propria comandă, fără aprobarea administratorului.
+D. Administratorul, fără o aprobare suplimentară a restaurantului.
+
+3. Ai ales capacitatea după volumul încărcăturii. Cum aflăm spațiul ocupat de fiecare comandă înainte de alocare?
+A. Restaurantul selectează numărul și tipul ambalajelor dintr-o listă: pungă, cutie pizza, bax etc., fiecare cu dimensiuni definite.
+B. Restaurantul introduce produsele, iar spațiul se calculează din ambalajele definite în catalogul său.
+C. Restaurantul introduce dimensiunile și numărul coletelor.
+D. Administratorul verifică și stabilește încărcătura pentru fiecare comandă înainte de alocare.
+
+4. La aglomerație, când nu putem prelua toate comenzile la timp, care are prioritate?
+A. Comanda cu termenul de livrare cel mai apropiat.
+B. Comanda care așteaptă de cel mai mult timp de când produsele sunt gata.
+C. Comanda introdusă prima, indiferent când sunt gata produsele.
+D. Administratorul stabilește manual ordinea comenzilor afectate.
+
+5. Cum tratăm produsele calde și reci pe aceeași rută?
+A. Le grupăm numai dacă vehiculul are spații separate, adecvate ambelor categorii.
+B. Nu le transportăm simultan în același vehicul.
+C. Le grupăm numai dacă provin de la același restaurant, care le ambalează separat.
+D. Le grupăm numai cu aprobarea expresă a restaurantelor implicate și cu ambalare separată.
+
+6. Livratorul trebuie să urmeze exact ordinea restaurantelor și clienților afișată în aplicație?
+A. Da; numai administratorul poate schimba ordinea.
+B. Livratorul poate propune următoarea oprire, iar aplicația permite schimbarea dacă toate comenzile rămân în limitele aprobate.
+C. Livratorul poate schimba între ele numai opririle de ridicare; ordinea clienților rămâne obligatorie.
+D. Livratorul poate schimba între ele numai opririle de livrare; ordinea restaurantelor rămâne obligatorie.
+În toate variantele, produsele se ridică înainte de livrare, iar capacitatea și termenele se respectă.
+
+7. Dacă mai mulți livratori pot executa ruta în limitele aprobate, ce criteriu are prioritate?
+A. Clientul noii comenzi primește produsele cât mai repede.
+B. Toate comenzile sunt executate cu cel mai mic timp suplimentar de deplasare și așteptare.
+C. Livratorul care a așteptat cel mai mult fără sarcină, dacă nicio comandă nu ajunge cu peste 3 minute mai târziu decât în varianta cea mai rapidă.
+D. Livratorul cu cel mai mic timp ocupat raportat la orele lucrate în tură, cu aceeași limită de 3 minute suplimentare.
+
+8. Folosim numerarul disponibil al livratorului când îi alocăm comenzi cu plată la restaurant?
+A. Da; banii trebuie să acopere toate plățile de pe traseu înainte de următoarea încasare efectivă.
+B. Da; dacă banii nu ajung, alocarea este permisă numai după aprobarea restaurantului în aplicație pentru ridicare fără plată.
+C. Numerarul nu influențează alocarea; insuficiența se rezolvă la restaurant prin procedura stabilită.
+D. Aplicația avertizează, iar administratorul decide alocarea; plecarea fără plată necesită în continuare aprobarea restaurantului.
+
+9. Dacă nu avem o poziție actuală a livratorului, cum procedăm cu alocările noi către el?
+A. Oprim toate alocările noi, inclusiv manuale, până când poziția revine.
+B. Oprim alocarea automată; administratorul îl contactează și poate aloca manual după confirmarea locului unde se află.
+C. Permitem alocarea automată încă maximum 3 minute după ultima poziție, cu avertizare și poziția afișată ca estimare; apoi o oprim.
+D. Oprim alocarea automată și anunțăm un dispecer desemnat; numai acesta poate confirma poziția și autoriza reluarea alocărilor.
+Comenzile deja alocate rămân în responsabilitatea livratorului până la o decizie explicită. Lipsa poziției nu dovedește, singură, că livratorul nu execută comanda.
+
+10. Livratorul nu confirmă primirea sau nu ajunge, nu răspunde, iar restaurantul confirmă că produsele NU au fost ridicate. Care este procedura de realocare?
+A. Administratorul poate realoca imediat după sesizarea restaurantului și o încercare de contact fără răspuns.
+B. Administratorul poate realoca după 2 minute de încercări de contact fără rezultat.
+C. Aplicația realocă automat după 2 minute fără confirmarea primirii, numai după confirmarea restaurantului că produsele sunt încă la el.
+D. Administratorul poate realoca după depășirea cu 5 minute a orei estimate de sosire și o încercare de contact fără răspuns.
+Lipsa confirmării, fără verificarea stării produselor, nu este suficientă pentru a presupune că acestea sunt încă la restaurant.
+
+11. Livratorul are produsele, vehiculul se defectează, iar restaurantul dorește continuarea livrării. Cum organizăm înlocuirea?
+A. Același livrator continuă cu alt vehicul; produsele rămân la el.
+B. Administratorul trimite un înlocuitor, iar ambii livratori confirmă predarea și primirea produselor.
+C. Produsele revin întâi la restaurant, care confirmă primirea și le predă înlocuitorului.
+D. Administratorul alege între aceste variante pentru fiecare incident și consemnează cine are produsele până la rezolvare.
+
+12. Pentru cursa inițială nereușită, ai indicat atât „plată normală și transport normal”, cât și două grile pentru produse returnate sau păstrate. Care este regula finală?
+A. Cursa inițială se plătește normal în ambele cazuri; diferența privește numai returul efectiv.
+B. Plata livratorului pentru cursa inițială diferă; restaurantul achită transportul normal în ambele cazuri.
+C. Transportul datorat de restaurant diferă; livratorul primește plata normală în ambele cazuri.
+D. Atât plata livratorului, cât și transportul restaurantului au valori distincte în cele două grile.
+
+13. Când livratorul achită o restanță către restaurant, cine poate confirma în aplicație banii efectiv primiți?
+A. Numai restaurantul care primește banii.
+B. Numai administratorul, după verificarea dovezii plății.
+C. Restaurantul sau administratorul, fiecare putând confirma direct cu sumă, dată și dovadă.
+D. Restaurantul pentru numerar; administratorul pentru transfer bancar, după verificarea încasării.
+Declarația livratorului că a plătit rămâne distinctă de confirmarea primirii banilor.
+
+14. Când restaurantul restituie livratorului banii pentru o comandă nereușită, cine confirmă încasarea efectivă a rambursării?
+A. Numai livratorul care a primit banii.
+B. Numai restaurantul care a restituit banii, cu sumă și dovadă.
+C. Restaurantul declară plata, iar livratorul confirmă separat primirea.
+D. Numai administratorul, după verificarea dovezii și a eventualelor diferențe.
+
+DATE REALE NECESARE SEPARAT DE GRILĂ
+
+1. Pentru fiecare categorie de produse din pilot: așteptare maximă a livratorului la restaurant; așteptare maximă a produselor gata până la ridicare; întârziere suplimentară permisă prin grupare; timp maxim ridicare–client. Toate valorile în minute. Ai ales deja limite după tipul produsului; acum lipsesc cifrele.
+2. Pentru fiecare vehicul din pilot: spațiu/dimensiuni utilizabile, compartimente, ambalaje incompatibile și restricții de greutate sau fragilitate. Ai ales deja capacitatea după volum.
+3. Pentru fiecare restaurant din pilot: transportul datorat de restaurant și remunerația livratorului, distinct pe zone și exterior; valorile cursei nereușite pentru retur/păstrare; transportul suplimentar datorat de restaurant pentru retur și schimbarea eligibilă a adresei. Sumele necomunicate nu vor fi tratate ca zero.

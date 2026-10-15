@@ -1,4 +1,9 @@
-from fastapi import APIRouter, HTTPException, Depends
+from typing import Annotated
+
+from fastapi import APIRouter, HTTPException, Depends, Header, Request
+from fastapi.responses import JSONResponse
+from pydantic import ValidationError
+import asyncio
 from pydantic import BaseModel, ConfigDict, Field
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -8,6 +13,13 @@ from shapely.geometry import Point, Polygon
 from database import db
 from auth import hash_password, get_current_user
 from models.restaurant import RestaurantCreate, RestaurantAvailabilityRequest, RestaurantScheduleSettingsUpdate
+
+from models.operational_reporting import CloseDayCommand, OperationalCommand
+from utils.operational_reporting import OperationalReportingService, ReportingError, DEADLINE_SECONDS
+from utils.order_finance import FinanceError, order_financial_snapshot
+from utils.order_reads import OrderReadService, read_error, identifier
+from utils.order_financial_reads import private_read, signed_read_actor, OUTER_FIELDS, project_outer
+from routers.order_operations import PrivateOperationRoute, _assign_actor_context, _http_error
 
 router = APIRouter(prefix="/restaurants", tags=["restaurants"])
 RESTAURANT_TIMEZONE = ZoneInfo("Europe/Bucharest")
@@ -154,7 +166,7 @@ def _build_restaurant_charts(orders: list[dict]) -> dict:
 
 def _build_recent_order_row(order: dict) -> dict:
     delivery_seconds = _delivery_seconds(order)
-    return {
+    row = {
         "id": order.get("id"),
         "order_number": order.get("order_number"),
         "status": order.get("status"),
@@ -166,6 +178,16 @@ def _build_recent_order_row(order: dict) -> dict:
         "preparation_delay_minutes": round((order.get("preparation_delay_seconds") or 0) / 60, 2) if order.get("preparation_delay_seconds") is not None else None,
         "delivery_minutes": round(delivery_seconds / 60, 2) if delivery_seconds is not None else None,
     }
+    if "financial" in order or "financial_contract_version" in order:
+        try:
+            financial = order_financial_snapshot(order)
+            row.update(financial=financial.model_dump(mode="json"), financial_contract_version=1,
+                       creation_operation_ref=financial.operation_ref, restaurant_id=financial.restaurant_id,
+                       payment_type=order["payment_type"])
+        except FinanceError:
+            row.update(financial=None, financial_contract_version=None, read_financial_invalid=True,
+                       read_actions_unavailable=True)
+    return row
 
 
 @router.post("")
@@ -247,10 +269,11 @@ async def get_restaurant(restaurant_id: str, current_user: dict = Depends(get_cu
 
 @router.patch("/{restaurant_id}/status")
 async def update_restaurant_status(restaurant_id: str, data: RestaurantStatusUpdate, current_user: dict = Depends(get_current_user)):
-    if current_user["role"] == "restaurant" and current_user.get("restaurant_id") != restaurant_id:
-        raise HTTPException(status_code=403, detail="Not authorized")
-    if current_user["role"] not in ["restaurant", "admin"]:
-        raise HTTPException(status_code=403, detail="Not authorized")
+    # Pause/resume is administrative; closure uses its own durable intent route.
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail={"code": "NOT_AUTHORIZED", "message": "Pauza este administrata separat."})
+    if data.closed_today is True:
+        raise HTTPException(status_code=422, detail={"code": "CLOSE_DAY_OPERATION_REQUIRED", "message": "Foloseste actiunea distincta de inchidere."})
     restaurant = await db.restaurants.find_one({"id": restaurant_id}, {"_id": 0})
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
@@ -260,12 +283,8 @@ async def update_restaurant_status(restaurant_id: str, data: RestaurantStatusUpd
         "status_updated_at": now.isoformat(),
         "status_updated_by": current_user.get("user_id"),
         "pause_until": None,
-        "closed_today": False,
     }
-    if not data.accepting_orders and data.closed_today:
-        update["closed_today"] = True
-        update["pause_until"] = _next_restaurant_local_midnight_utc(now).isoformat()
-    elif not data.accepting_orders and data.pause_minutes:
+    if not data.accepting_orders and data.pause_minutes:
         minutes = max(1, min(int(data.pause_minutes), 720))
         update["pause_until"] = (now + timedelta(minutes=minutes)).isoformat()
     await db.restaurants.update_one({"id": restaurant_id}, {"$set": update})
@@ -297,25 +316,96 @@ async def update_restaurant_schedule_settings(restaurant_id: str, data: Restaura
     return {"message": "Program restaurant actualizat", **update}
 
 
-@router.get("/{restaurant_id}/analytics")
-async def get_restaurant_analytics(restaurant_id: str, current_user: dict = Depends(get_current_user)):
-    if current_user["role"] == "restaurant" and current_user.get("restaurant_id") != restaurant_id:
-        raise HTTPException(status_code=403, detail="Not authorized")
-    if current_user["role"] not in ["admin", "restaurant"]:
-        raise HTTPException(status_code=403, detail="Not authorized")
+@private_read(router, "/{restaurant_id}/analytics")
+async def get_restaurant_analytics(restaurant_id: str, current_user: dict = Depends(signed_read_actor)):
+    service = OrderReadService(db)
+    async def execute():
+        identifier(restaurant_id)
+        context = await service.authorize_read(current_user)
+        if context.role != "admin" and (context.role != "restaurant" or context.restaurant_id != restaurant_id):
+            raise read_error(403, "NOT_AUTHORIZED")
+        restaurants = await service.outer_documents(db.restaurants, {"id": restaurant_id}, OUTER_FIELDS["restaurant"])
+        if len(restaurants) != 1:
+            raise read_error(404 if not restaurants else 409, "RESTAURANT_NOT_FOUND" if not restaurants else "RESTAURANT_AMBIGUOUS")
+        restaurant = project_outer(restaurants[0], "restaurant")
+        if restaurant.get("id") != restaurant_id:
+            raise read_error(503, "READ_UNAVAILABLE")
+        orders = await service.load_orders(context, query={"restaurant_id": restaurant_id}, limit=2000, sort={"created_at": -1})
+        projected, _ = await service.serialize_orders(orders[:80], context)
+        status_groups = _split_orders_by_status(orders)
+        metrics = _preparation_metric_lists(orders, status_groups["delivered"])
+        recent = []
+        for document, validated in zip(orders[:80], projected):
+            row = _build_recent_order_row(document)
+            for key in ("financial", "financial_contract_version", "creation_operation_ref",
+                        "read_financial_invalid", "read_actions_unavailable"):
+                row.pop(key, None)
+            row.update({k: v for k, v in validated.items() if k.startswith(("financial", "custody", "read_"))
+                or k in ("restaurant_id", "driver_id", "payment_type", "creation_operation_ref")})
+            recent.append(row)
+        await service.revalidate_read(context)
+        return {"restaurant": restaurant, "program": restaurant.get("program") or "Program nesetat",
+            "summary": _build_order_analytics_summary(orders, status_groups, metrics),
+            "charts": _build_restaurant_charts(orders), "recent_orders": recent}
+    return await service._bounded(execute)
 
-    restaurant = await db.restaurants.find_one({"id": restaurant_id}, {"_id": 0})
-    if not restaurant:
-        raise HTTPException(status_code=404, detail="Restaurant not found")
 
-    orders = await db.orders.find({"restaurant_id": restaurant_id}, {"_id": 0}).sort("created_at", -1).to_list(2000)
-    status_groups = _split_orders_by_status(orders)
-    metrics = _preparation_metric_lists(orders, status_groups["delivered"])
+close_day_router = APIRouter(prefix="/{restaurant_id}/close-day", route_class=PrivateOperationRoute)
 
-    return {
-        "restaurant": restaurant,
-        "program": restaurant.get("program") or "Program nesetat",
-        "summary": _build_order_analytics_summary(orders, status_groups, metrics),
-        "charts": _build_restaurant_charts(orders),
-        "recent_orders": [_build_recent_order_row(order) for order in orders[:80]],
-    }
+def _close_day_path(operation_id):
+    try:
+        OperationalCommand(client_operation_id=operation_id)
+    except ValidationError:
+        raise HTTPException(status_code=422, detail={"code": "INVALID_OPERATION_ID", "message": "Identitate invalida."}) from None
+
+async def _close_day_response(outcome):
+    headers = {"Cache-Control": "no-store"}
+    if outcome.result["state"] == "pending":
+        headers["Retry-After"] = str(outcome.result["retry_after_seconds"])
+    return JSONResponse(outcome.result, status_code=outcome.status_code, headers=headers)
+
+@close_day_router.get("/capabilities")
+async def close_day_capabilities(restaurant_id: str, actor: dict = Depends(get_current_user),
+    expected_actor_id: Annotated[str | None, Header(alias="X-Expected-Actor-ID")] = None):
+    _assign_actor_context(actor, expected_actor_id)
+    try:
+        return JSONResponse(await OperationalReportingService(db, "close_day").capabilities(actor, restaurant_id),
+                            headers={"Cache-Control": "no-store"})
+    except ReportingError as error:
+        raise _http_error(error) from None
+
+@close_day_router.patch("")
+async def close_restaurant_day(restaurant_id: str, command: CloseDayCommand, actor: dict = Depends(get_current_user),
+    expected_actor_id: Annotated[str | None, Header(alias="X-Expected-Actor-ID")] = None):
+    _assign_actor_context(actor, expected_actor_id)
+    try:
+        return await _close_day_response(await OperationalReportingService(db, "close_day").submit(restaurant_id, command, actor))
+    except ReportingError as error:
+        raise _http_error(error) from None
+
+@close_day_router.get("/operations/{client_operation_id}")
+async def lookup_close_day(restaurant_id: str, client_operation_id: str, actor: dict = Depends(get_current_user),
+    expected_actor_id: Annotated[str | None, Header(alias="X-Expected-Actor-ID")] = None):
+    _assign_actor_context(actor, expected_actor_id); _close_day_path(client_operation_id)
+    try:
+        return await _close_day_response(await OperationalReportingService(db, "close_day").lookup(restaurant_id, client_operation_id, actor))
+    except ReportingError as error:
+        raise _http_error(error) from None
+
+@close_day_router.post("/operations/{client_operation_id}/resume")
+async def resume_close_day(restaurant_id: str, client_operation_id: str, request: Request, actor: dict = Depends(get_current_user),
+    expected_actor_id: Annotated[str | None, Header(alias="X-Expected-Actor-ID")] = None):
+    _assign_actor_context(actor, expected_actor_id); _close_day_path(client_operation_id)
+    try:
+        async with asyncio.timeout(DEADLINE_SECONDS):
+            async for chunk in request.stream():
+                if chunk:
+                    raise HTTPException(status_code=422, detail={"code": "INVALID_REQUEST", "message": "Cererea nu accepta date."})
+    except TimeoutError:
+        raise HTTPException(status_code=408, detail={"code": "REQUEST_TIMEOUT", "message": "Cererea nu s-a incheiat la timp."}) from None
+    try:
+        return await _close_day_response(await OperationalReportingService(db, "close_day").resume(restaurant_id, client_operation_id, actor))
+    except ReportingError as error:
+        raise _http_error(error) from None
+
+router.include_router(close_day_router)

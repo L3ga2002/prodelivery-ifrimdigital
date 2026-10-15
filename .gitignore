@@ -133,3 +133,16 @@ memory/test_credentials.md
 .claude/settings.local.json
 .claude/agent-memory-local/
 .claude/tmp/
+
+# Local QA copies, runtime databases and browser sessions
+.ifrim/BACKUPS/
+.ifrim/QA_RUNS/
+.playwright-cli/
+
+# Generated mobile binaries, caches and private signing material
+*.apk
+*.aab
+*.keystore
+*.jks
+.gradle/
+.cxx/

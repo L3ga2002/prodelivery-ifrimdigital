@@ -1,5 +1,14 @@
+import { readCustodyActivity } from "../lib/orderCustody";
+import { useOrderCustodyRecovery } from "../hooks/useOrderCustodyRecovery";
+import { CustodyControls, CustodyRecoveryPanel, OrderCustodySummary } from "../components/OrderCustody";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "../context/AuthContext";
+import { OperationalIncidentReporter, IncidentSummary } from "../components/OperationalIncidentReporter";
+import { OrderFinancialSummary } from "../components/OrderFinancialSummary";
+import { clientCollectionText } from "../lib/orderFinance";
+import { FinancialEventControls, FinancialEventRecoveryPanel } from "../components/OrderFinancialActivity";
+import { financialPickupBlocked } from "../lib/orderFinancialActivity";
+import { useOrderFinancialEventRecovery } from "../hooks/useOrderFinancialEventRecovery";
 import axios from "axios";
 import { toast } from "sonner";
 import { Button } from "../components/ui/button";
@@ -49,6 +58,9 @@ import { DriverAvatar } from "../components/DriverAvatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { getApiErrorMessage, normalizeArray, normalizeObject, retryApiCall } from "../lib/api";
 import { useNetworkStatus } from "../hooks/useNetworkStatus";
+import { getPreparationStatus, isActionableDriverOrder } from "../lib/orderWorkflow";
+import { useOrderStatusRecovery, OrderStatusRecoveryPanel } from "../hooks/useOrderStatusRecovery";
+import { hasStatusRevision, canChangeOrderStatus, statusApplied } from "../lib/orderStatusRecovery";
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 const DRIVER_ORDER_POLL_INTERVAL_MS = 5000;
@@ -64,7 +76,7 @@ window.addEventListener('beforeinstallprompt', (e) => {
 const getStatusConfig = (status) => {
   const config = {
     ASSIGNED: { label: "Alocată", color: "bg-blue-500", textColor: "text-blue-800 dark:text-blue-100", bgColor: "bg-blue-100 dark:bg-blue-950/40" },
-    ACCEPTED: { label: "Acceptată", color: "bg-purple-500", textColor: "text-purple-800 dark:text-purple-100", bgColor: "bg-purple-100 dark:bg-purple-950/40" },
+    ACCEPTED: { label: "Primire confirmată", color: "bg-purple-500", textColor: "text-purple-800 dark:text-purple-100", bgColor: "bg-purple-100 dark:bg-purple-950/40" },
     PICKED_UP: { label: "Ridicată", color: "bg-orange-500", textColor: "text-orange-800 dark:text-orange-100", bgColor: "bg-orange-100 dark:bg-orange-950/40" },
     DELIVERED: { label: "Livrată", color: "bg-green-500", textColor: "text-green-800 dark:text-green-100", bgColor: "bg-green-100 dark:bg-green-950/40" },
   };
@@ -78,6 +90,14 @@ const splitName = (name = "") => {
 
 const isValidPhone = (phone = "") => /^(07\d{8}|\+407\d{8})$/.test(phone.replace(/\s/g, ""));
 const isValidCnp = (cnp = "") => cnp === "" || /^\d{13}$/.test(cnp);
+const validDriverDashboard = (response, driverId) => {
+  const driver = response?.data?.driver;
+  return response?.status === 200 && driver?.id === driverId &&
+    ["active", "delivery", "break", "offline"].includes(driver.operational_status) &&
+    typeof driver.operational_status_label === "string" && driver.operational_status_label.trim().length > 0 &&
+    Number.isSafeInteger(driver.total_deliveries) && driver.total_deliveries >= 0 &&
+    typeof driver.total_earnings === "number" && Number.isFinite(driver.total_earnings) && driver.total_earnings >= 0;
+};
 
 const formatScheduleDay = (date) => date.toLocaleDateString("ro-RO", { weekday: "short", day: "2-digit", month: "2-digit" });
 
@@ -94,8 +114,12 @@ const ProDeliveryMark = ({ dark = true, testId = "prodelivery-mark" }) => (
   </div>
 );
 
-const getCurrentStepLabel = (order) => {
+export const getCurrentStepLabel = (order) => {
   if (!order) return "Fără comandă";
+  const custody = readCustodyActivity(order);
+  if (custody.state === "invalid") return "Verifică evidența produselor";
+  if (custody.value?.status === "return_requested") return "Returnează produsele restaurantului";
+  if (custody.value?.status === "keep_authorized") return "Confirmă instrucțiunea de păstrare";
   const labels = {
     ASSIGNED: "Comandă primită",
     ACCEPTED: "Mergi la restaurant",
@@ -105,9 +129,23 @@ const getCurrentStepLabel = (order) => {
 };
 
 const DriverApp = () => {
-  const { user, logout } = useAuth();
+  const { user, token, logout } = useAuth();
   const { isOnline } = useNetworkStatus();
+  const statusRecovery = useOrderStatusRecovery(user, API_URL, isOnline, token, false);
+  const financialRecovery = useOrderFinancialEventRecovery(user, API_URL, isOnline, token);
+  const custodyRecovery = useOrderCustodyRecovery(user, API_URL, isOnline, token);
+  const custodyBusy = Boolean(custodyRecovery.record || custodyRecovery.storageInvalid || custodyRecovery.busy || custodyRecovery.sessionSuspended);
+  const [custodyIncident, setCustodyIncident] = useState(null);
+  const statusMutationRef = useRef(false), handledStatusReceipt = useRef(null), statusSession = useRef(null);
+  const statusMounted = useRef(false);
+  if (statusSession.current?.actor !== user?.id || statusSession.current?.token !== token || statusSession.current?.resource !== user?.driver_id) {
+    statusSession.current = { actor: user?.id, token, resource: user?.driver_id };
+  }
+  useEffect(() => { statusMounted.current = true; return () => { statusMounted.current = false; }; }, []);
   const [currentOrder, setCurrentOrder] = useState(null);
+  const verifyStatusCapability = statusRecovery.verifyCapability;
+  const currentStatusVersioned = hasStatusRevision(currentOrder);
+  useEffect(() => { if (currentStatusVersioned && isOnline) void verifyStatusCapability(); }, [currentStatusVersioned, currentOrder?.id, isOnline, verifyStatusCapability]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshingOrder, setIsRefreshingOrder] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
@@ -118,6 +156,8 @@ const DriverApp = () => {
   const lastOrderIdRef = useRef(null);
   const hasLoadedOrdersRef = useRef(false);
   const fetchOrderRequestRef = useRef(0);
+  const fetchDriverProfileRequestRef = useRef(0);
+  const profileFlightRef = useRef(null);
   const [newOrderFlash, setNewOrderFlash] = useState(false);
   const [emailCode, setEmailCode] = useState("");
   const [emailVerified, setEmailVerified] = useState(user?.email_verified !== false);
@@ -126,6 +166,7 @@ const DriverApp = () => {
   const [cancelDialog, setCancelDialog] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [driverDashboard, setDriverDashboard] = useState(null);
+  const [driverProfileState, setDriverProfileState] = useState({ fresh: false, busy: false, error: "" });
   const [driverStatusForm, setDriverStatusForm] = useState({ status: "active", break_minutes: 30 });
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
@@ -160,7 +201,10 @@ const DriverApp = () => {
     deferredPrompt = null;
   };
 
-  const fetchOrder = useCallback(async ({ manual = false, silent = false } = {}) => {
+  const fetchOrder = useCallback(async ({ manual = false, silent = false, isCurrent = () => true } = {}) => {
+    const session = statusSession.current;
+    if (!isCurrent()) return;
+    if (!statusMounted.current || session?.actor !== user?.id || session?.token !== token || session?.resource !== user?.driver_id) return;
     if (!user?.driver_id) {
       setIsLoading(false);
       return;
@@ -170,11 +214,13 @@ const DriverApp = () => {
     fetchOrderRequestRef.current = requestId;
     if (manual) setIsRefreshingOrder(true);
     try {
-      const response = await retryApiCall(() => axios.get(`${API_URL}/api/orders/driver/${user.driver_id}`));
-      if (requestId !== fetchOrderRequestRef.current) return;
+      const response = await retryApiCall(() => {
+        if (!isCurrent()) throw new Error("SESSION_CHANGED");
+        return axios.get(`${API_URL}/api/orders/driver/${user.driver_id}`, { timeout: 15000 });
+      });
+      if (!isCurrent() || requestId !== fetchOrderRequestRef.current || statusMutationRef.current || statusSession.current !== session || !statusMounted.current) return;
       const orders = normalizeArray(response.data);
-      // Get the first non-delivered order
-      const activeOrder = orders.find((o) => o.status !== "DELIVERED");
+      const activeOrder = orders.find(isActionableDriverOrder);
 
       // Play notification sound for new order
       if (activeOrder && activeOrder.id !== lastOrderIdRef.current) {
@@ -209,27 +255,41 @@ const DriverApp = () => {
 
       setCurrentOrder(activeOrder || null);
     } catch (error) {
-      if (requestId === fetchOrderRequestRef.current) {
+      if (isCurrent() && requestId === fetchOrderRequestRef.current && statusSession.current === session && statusMounted.current) {
         if (!silent) {
           toast.error(getApiErrorMessage(error, "Nu am putut încărca livrarea curentă"));
         }
       }
     } finally {
-      if (requestId === fetchOrderRequestRef.current) {
+      if (isCurrent() && requestId === fetchOrderRequestRef.current && statusSession.current === session && statusMounted.current) {
         setIsLoading(false);
         hasLoadedOrdersRef.current = true;
       }
-      if (manual) setIsRefreshingOrder(false);
+      if (isCurrent() && manual && statusSession.current === session && statusMounted.current) setIsRefreshingOrder(false);
     }
-  }, [user?.driver_id]);
+  }, [user?.driver_id, user?.id, token]);
 
-  const fetchDriverProfile = useCallback(async () => {
-    if (!user?.driver_id) return;
+  const fetchDriverProfile = useCallback(async ({ silent = false, hydrateForms = true, manual = false } = {}) => {
+    const session = statusSession.current;
+    if (!statusMounted.current || !user?.driver_id || session?.actor !== user?.id || session?.token !== token || session?.resource !== user?.driver_id) return;
+    if (manual && profileFlightRef.current?.session === session) return;
+    const requestId = ++fetchDriverProfileRequestRef.current;
+    const job = { session, requestId }; profileFlightRef.current = job;
+    const ownsRequest = () => statusMounted.current && statusSession.current === session && requestId === fetchDriverProfileRequestRef.current;
+    setDriverProfileState({ session, fresh: false, busy: true, error: "" });
     try {
-      const response = await retryApiCall(() => axios.get(`${API_URL}/api/drivers/${user.driver_id}/dashboard`));
+      const response = await retryApiCall(() => {
+        if (!ownsRequest()) throw new Error("SESSION_CHANGED");
+        return axios.get(`${API_URL}/api/drivers/${session.resource}/dashboard`, { timeout: 15000,
+          headers: { Authorization: token ? `Bearer ${token}` : null, "X-Expected-Actor-ID": session.actor } });
+      });
+      if (!ownsRequest()) return;
+      if (!validDriverDashboard(response, session.resource)) throw new Error("INVALID_DRIVER_DASHBOARD");
       const dashboard = normalizeObject(response.data);
-      setDriverDashboard(dashboard);
       const driver = normalizeObject(dashboard.driver);
+      setDriverDashboard(dashboard);
+      setDriverProfileState({ session, fresh: true, busy: false, error: "" });
+      if (!hydrateForms) return;
       const fallback = splitName(driver.name || user?.name || "");
       setProfileForm({
         first_name: driver.first_name || fallback.first_name,
@@ -246,9 +306,15 @@ const DriverApp = () => {
         status: status === "delivery" ? "active" : status,
       }));
     } catch (error) {
-      toast.error(getApiErrorMessage(error, "Nu am putut încărca profilul livratorului"));
+      if (ownsRequest()) {
+        setDriverProfileState({ session, fresh: false, busy: false,
+          error: error.message === "INVALID_DRIVER_DASHBOARD" ? "Raspunsul dashboard-ului este incomplet sau invalid." : "Dashboard-ul nu poate fi verificat." });
+        if (!silent) toast.error(getApiErrorMessage(error, "Nu am putut încărca profilul livratorului"));
+      }
+    } finally {
+      if (profileFlightRef.current === job) profileFlightRef.current = null;
     }
-  }, [user?.driver_id, user?.email, user?.name, user?.phone]);
+  }, [user?.driver_id, user?.id, token, user?.email, user?.name, user?.phone]);
 
   useEffect(() => {
     setEmailVerified(user?.email_verified !== false);
@@ -349,38 +415,75 @@ const DriverApp = () => {
     }
   };
 
-  const updateStatus = useCallback(async (newStatus) => {
-    if (!currentOrder || isUpdating) return;
+  const updateStatus = useCallback(async (newStatus, cancellationReason) => {
+    if (custodyBusy || !currentOrder || isUpdating || isCancellingOrder || statusMutationRef.current || financialRecovery.record || financialRecovery.storageInvalid || !statusRecovery.canSubmit(currentOrder)) return;
+    if (!canChangeOrderStatus(currentOrder, newStatus, user)) return;
+    if (newStatus === "PICKED_UP" && (currentOrder.status !== "ACCEPTED" || getPreparationStatus(currentOrder) !== "READY" || financialPickupBlocked(currentOrder))) return;
     if (!isOnline) {
       toast.error("Nu ai conexiune la internet. Încearcă după reconectare.");
       return;
     }
 
+    const session = statusSession.current;
+    const ownsSession = () => statusMounted.current && statusSession.current === session;
+    statusMutationRef.current = true; fetchOrderRequestRef.current += 1; fetchDriverProfileRequestRef.current += 1;
+    profileFlightRef.current = null;
+    setDriverProfileState((prev) => prev.session === session ? { ...prev, busy: false } : prev);
     setIsUpdating(true);
+    if (newStatus === "CANCELLED") setIsCancellingOrder(true);
     try {
-      await axios.put(`${API_URL}/api/orders/${currentOrder.id}/status`, {
-        status: newStatus,
-      });
+      const command = { order: currentOrder, status: newStatus,
+        ...(newStatus === "CANCELLED" ? { cancellationReason } : {}) };
+      const versioned = hasStatusRevision(currentOrder);
+      const result = await (versioned ? statusRecovery.submit(command) : statusRecovery.submitLegacy(command));
+      if (!ownsSession() || !result || (versioned && !statusApplied(result))) return;
+      if (versioned) return;
 
       const statusLabels = {
-        ACCEPTED: "Comandă acceptată!",
+        ACCEPTED: "Primirea comenzii a fost confirmată!",
         PICKED_UP: "Comandă ridicată!",
         DELIVERED: "Livrare finalizată!",
+        CANCELLED: "Comanda a fost anulata",
       };
 
       toast.success(statusLabels[newStatus] || "Status actualizat!");
       setConfirmAction(null);
+      setCancelDialog(false); setCancelReason("");
 
-      if (newStatus === "DELIVERED") {
+      if (["DELIVERED", "CANCELLED"].includes(newStatus)) {
         setCurrentOrder(null);
       }
-      await fetchOrder({ silent: true });
+      await fetchDriverProfile({ silent: true, hydrateForms: false });
     } catch (error) {
-      toast.error(getApiErrorMessage(error, "Eroare la actualizare status"));
+      if (ownsSession()) toast.error(getApiErrorMessage(error, "Eroare la actualizare status"));
     } finally {
-      setIsUpdating(false);
+      statusMutationRef.current = false;
+      if (ownsSession()) {
+        fetchOrderRequestRef.current += 1; setIsUpdating(false); setIsCancellingOrder(false);
+        await fetchOrder({ silent: true });
+      }
     }
-  }, [currentOrder, fetchOrder, isOnline, isUpdating]);
+  }, [currentOrder, fetchOrder, fetchDriverProfile, isOnline, isUpdating, isCancellingOrder, statusRecovery, financialRecovery, custodyBusy, user]);
+
+  useEffect(() => {
+    const r = statusRecovery.record;
+    if (!r || !statusApplied(r.receipt)) return;
+    const key = `${user?.id}:${token}:${r.client_operation_id}`;
+    if (handledStatusReceipt.current === key) return;
+    handledStatusReceipt.current = key; fetchOrderRequestRef.current += 1; fetchDriverProfileRequestRef.current += 1;
+    toast.success({ ACCEPTED: "Primirea comenzii a fost confirmată!", PICKED_UP: "Comanda ridicata!", DELIVERED: "Livrare finalizata!", CANCELLED: "Comanda a fost anulata" }[r.status]);
+    setConfirmAction(null); setCancelDialog(false); setCancelReason("");
+    if (["DELIVERED", "CANCELLED"].includes(r.status)) setCurrentOrder((o) => o?.id === r.order_id ? null : o);
+    void fetchDriverProfile({ silent: true, hydrateForms: false });
+    if (!statusMutationRef.current) void fetchOrder({ silent: true });
+  }, [statusRecovery.record, fetchOrder, fetchDriverProfile, user?.id, token]);
+
+  useEffect(() => {
+    fetchOrderRequestRef.current += 1; setCurrentOrder(null); setConfirmAction(null); setCancelDialog(false); setCancelReason("");
+    setDriverDashboard(null);
+    setIsUpdating(false); setIsCancellingOrder(false);
+    void fetchOrder({ silent: true });
+  }, [user?.id, user?.driver_id, token, fetchOrder]);
 
   const handleCancelOrder = useCallback(async () => {
     if (isCancellingOrder) return;
@@ -396,23 +499,8 @@ const DriverApp = () => {
       toast.error("Motivul anulării este obligatoriu!");
       return;
     }
-    setIsCancellingOrder(true);
-    try {
-      await axios.put(`${API_URL}/api/orders/${currentOrder.id}/status`, {
-        status: "CANCELLED",
-        cancellation_reason: cancelReason.trim()
-      });
-      toast.success("Comanda a fost anulată");
-      setCancelDialog(false);
-      setCancelReason("");
-      setCurrentOrder(null);
-      await fetchOrder({ silent: true });
-    } catch (error) {
-      toast.error(getApiErrorMessage(error, "Eroare la anulare"));
-    } finally {
-      setIsCancellingOrder(false);
-    }
-  }, [cancelReason, currentOrder?.id, fetchOrder, isCancellingOrder, isOnline]);
+    await updateStatus("CANCELLED", cancelReason.trim());
+  }, [cancelReason, currentOrder?.id, isCancellingOrder, isOnline, updateStatus]);
 
   const openNavigation = (address) => {
     const encodedAddress = encodeURIComponent(address);
@@ -424,7 +512,7 @@ const DriverApp = () => {
     window.open(`tel:${phone}`, "_self");
   };
 
-  if (isLoading) {
+  if (isLoading && !statusRecovery.record && !statusRecovery.storageInvalid && !financialRecovery.record && !financialRecovery.storageInvalid && !custodyRecovery.record && !custodyRecovery.storageInvalid) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-black">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500"></div>
@@ -433,13 +521,16 @@ const DriverApp = () => {
   }
 
   const driver = driverDashboard?.driver || {};
+  const profileFresh = driverProfileState.session === statusSession.current && driverProfileState.fresh;
+  const profileBusy = driverProfileState.session === statusSession.current && driverProfileState.busy;
+  const profileError = driverProfileState.session === statusSession.current ? driverProfileState.error : "";
   const today = new Date();
   const todaySummary = {
-    deliveries: driver.total_deliveries || 0,
-    earnings: Number(driver.total_earnings || 0).toFixed(2),
-    activeTime: driver.schedule_today_hours ? `${driver.schedule_today_hours}h` : "0h",
+    deliveries: profileFresh ? driver.total_deliveries : "--",
+    earnings: profileFresh ? driver.total_earnings.toFixed(2) : "--",
+    activeTime: !profileFresh ? "--" : driver.schedule_today_hours ? `${driver.schedule_today_hours}h` : "0h",
   };
-  const statusLabel = driver.operational_status_label || "Offline";
+  const statusLabel = profileFresh ? driver.operational_status_label : "Neactualizat";
   const currentStepLabel = getCurrentStepLabel(currentOrder);
 
   const renderHome = () => (
@@ -531,7 +622,7 @@ const DriverApp = () => {
         <section className="space-y-3" data-testid="active-order">
           <Card className="border-white/10 bg-zinc-950 text-white"><CardContent className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-zinc-400">Pas curent</p><p className="text-xl font-black">{currentStepLabel}</p></div><Badge className="bg-orange-500 text-white">{getStatusConfig(currentOrder.status).label}</Badge></div></CardContent></Card>
           <Card className="border-white/10 bg-zinc-950 text-white" data-testid="customer-info-card"><CardHeader><CardTitle className="text-base">Client</CardTitle></CardHeader><CardContent className="space-y-3"><p className="text-xl font-black">{currentOrder.customer_name}</p><p className="text-zinc-300">{currentOrder.customer_address}</p><Button type="button" onClick={() => callCustomer(currentOrder.customer_phone)} className="h-13 w-full rounded-2xl bg-emerald-600 font-black" data-testid="call-customer-button"><Phone className="mr-2 h-5 w-5" /> Sună clientul</Button><Button type="button" variant="outline" onClick={() => openNavigation(currentOrder.customer_address)} className="h-13 w-full rounded-2xl border-white/10 bg-transparent text-white" data-testid="navigate-button"><Navigation className="mr-2 h-5 w-5" /> Navigație</Button></CardContent></Card>
-          <Card className="border-white/10 bg-zinc-950 text-white" data-testid="order-details-card"><CardHeader><CardTitle className="text-base">Detalii comandă</CardTitle></CardHeader><CardContent className="space-y-3">{currentOrder.items?.map((item) => <div key={`${currentOrder.id}-${item.name}`} className="flex justify-between border-b border-white/10 pb-2"><span>{item.quantity}x {item.name}</span><span>{item.price * item.quantity} RON</span></div>)}<div className="rounded-2xl bg-white/5 p-3"><p className="text-sm text-zinc-400">De încasat</p><p className="text-2xl font-black">{currentOrder.total_amount} RON</p><p className="text-sm text-orange-300">{currentOrder.payment_type === "CASH" ? "Numerar" : "Card"}</p></div></CardContent></Card>
+          <Card className="border-white/10 bg-zinc-950 text-white" data-testid="order-details-card"><CardHeader><CardTitle className="text-base">Detalii comandă</CardTitle></CardHeader><CardContent className="space-y-3">{currentOrder.items?.map((item) => <div key={`${currentOrder.id}-${item.name}`} className="flex justify-between border-b border-white/10 pb-2"><span>{item.quantity}x {item.name}</span><span>{item.price * item.quantity} RON</span></div>)}<div className="rounded-2xl bg-white/5 p-3"><p className="text-sm text-zinc-400">De încasat</p><p className="text-2xl font-black">{clientCollectionText(currentOrder)}</p><p className="text-sm text-orange-300">{currentOrder.payment_type === "CASH" ? "Numerar" : "Card"}</p></div><OrderFinancialSummary order={currentOrder} role="driver" /></CardContent></Card>
         </section>
       )}
     </div>
@@ -577,7 +668,13 @@ const DriverApp = () => {
 
   return (
     <div className="min-h-screen bg-neutral-950 text-white" data-testid="driver-app">
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col overflow-hidden bg-[#090b0f] shadow-2xl">
+      <div
+        className="mx-auto flex min-h-screen w-full max-w-md flex-col overflow-hidden bg-[#090b0f] shadow-2xl"
+        style={{
+          "--driver-navigation-height": "calc(5rem + env(safe-area-inset-bottom, 0px))",
+          paddingBottom: "var(--driver-navigation-height)",
+        }}
+      >
         <header className="relative shrink-0 overflow-hidden px-5 pb-4 pt-4" data-testid="driver-mobile-header">
           <div className="absolute -left-16 -top-28 h-52 w-72 rounded-full bg-orange-600" />
           <div className="relative z-10 flex items-center justify-between">
@@ -596,6 +693,20 @@ const DriverApp = () => {
         </header>
 
         <main className="flex-1 overflow-y-auto px-4 pb-28">
+        <OrderStatusRecoveryPanel recovery={statusRecovery} isOnline={isOnline} order={currentOrder}
+          onAcknowledged={() => fetchOrder({ silent: true })} onRetry={(fresh) => setCurrentOrder(fresh)} />
+        <CustodyRecoveryPanel recovery={custodyRecovery} isOnline={isOnline} onAcknowledged={(fresh) => {
+          setCurrentOrder((current) => current?.id === fresh.id ? (["DELIVERED", "CANCELLED"].includes(fresh.status) ? null : fresh) : current);
+          void fetchOrder({ silent: true }); void fetchDriverProfile({ silent: true, hydrateForms: false });
+        }} />
+        <FinancialEventRecoveryPanel recovery={financialRecovery} isOnline={isOnline} onAcknowledged={(fresh) => {
+          setCurrentOrder((current) => current?.id === fresh.id ? fresh : current);
+          void fetchOrder({ silent: true });
+        }} />
+        {!profileFresh && <section className="my-3 space-y-2 border-y border-amber-500/40 py-3 text-sm text-amber-200" data-testid="driver-profile-freshness">
+          <p role={profileError ? "alert" : "status"}>Status/incasari neactualizate.{profileBusy ? " Se verifica dashboard-ul." : profileError ? ` ${profileError}` : ""}</p>
+          <Button variant="outline" className="h-auto min-h-9 whitespace-normal" onClick={() => { if (isOnline) void fetchDriverProfile({ silent: true, hydrateForms: false, manual: true }); }} disabled={!isOnline || profileBusy || isUpdating || isCancellingOrder} data-testid="driver-profile-refresh-button"><RefreshCw className="mr-2 h-4 w-4" />Actualizeaza statusul si incasarile</Button>
+        </section>}
         {/* New Order Flash Banner */}
         {newOrderFlash && (
           <div
@@ -610,24 +721,33 @@ const DriverApp = () => {
             <p className="text-sm opacity-90 mt-1">Verifică detaliile și confirmă preluarea rapid.</p>
           </div>
         )}
+        <IncidentSummary order={currentOrder} />
+        <OperationalIncidentReporter actor={user} token={token} scope={`driver-incidents:${user?.driver_id}`} apiUrl={API_URL} isOnline={isOnline} order={currentOrder} selectionDisabled={custodyBusy} disabled={custodyBusy}
+          onSelectBlockedIncident={(id) => setCustodyIncident({ id, actor: user?.id, resource: user?.driver_id, token, order: currentOrder?.id })} onReported={(receipt, guard) => fetchOrder({ silent: true, isCurrent: guard.isCurrent })} />
+        {activeTab !== "delivery" && <OrderCustodySummary order={currentOrder} />}
+        <CustodyControls order={currentOrder} actor={user} recovery={custodyRecovery} isOnline={isOnline}
+          disabled={custodyBusy || isUpdating || isCancellingOrder || statusRecovery.blocked || financialRecovery.blocked}
+          incidentId={custodyIncident?.actor === user?.id && custodyIncident?.resource === user?.driver_id && custodyIncident?.token === token && custodyIncident?.order === currentOrder?.id ? custodyIncident.id : null} />
         {activeTab === "home" && renderHome()}
         {activeTab === "delivery" && renderDelivery()}
         {activeTab === "calendar" && renderCalendar()}
         {activeTab === "profile" && renderProfile()}
       </main>
 
-      {/* Action Buttons - Fixed at Bottom */}
+      {/* In-flow actions share the container's bottom navigation clearance. */}
       {currentOrder && activeTab === "delivery" && (
         <div className="border-t border-white/10 bg-black p-4 space-y-3" data-testid="action-buttons">
+          <FinancialEventControls order={currentOrder} actor={user} recovery={financialRecovery} isOnline={isOnline}
+            disabled={custodyBusy || isUpdating || isCancellingOrder || statusRecovery.blocked} />
           {currentOrder.status === "ASSIGNED" && (
             <Button
-              className="driver-btn bg-orange-600 hover:bg-orange-700"
+              className="driver-btn whitespace-normal leading-tight bg-orange-600 hover:bg-orange-700"
               onClick={() => updateStatus("ACCEPTED")}
-              disabled={isUpdating || !isOnline}
+              disabled={custodyBusy || isUpdating || !isOnline || !statusRecovery.canSubmit(currentOrder) || !canChangeOrderStatus(currentOrder, "ACCEPTED", user)}
               data-testid="accept-button"
             >
               <CheckCircle2 className="w-6 h-6 mr-3" />
-              {isUpdating ? "SE PROCESEAZĂ..." : "ACCEPT COMANDA"}
+              {isUpdating ? "SE PROCESEAZĂ..." : "CONFIRM PRIMIREA COMENZII"}
             </Button>
           )}
 
@@ -635,7 +755,7 @@ const DriverApp = () => {
             <Button
               className="driver-btn bg-orange-500 hover:bg-orange-600"
               onClick={() => setConfirmAction({ status: "PICKED_UP", label: "Confirmați că ați ridicat comanda de la restaurant?" })}
-              disabled={isUpdating || !isOnline}
+              disabled={custodyBusy || isUpdating || !isOnline || financialRecovery.record || financialRecovery.storageInvalid || financialPickupBlocked(currentOrder) || !statusRecovery.canSubmit(currentOrder) || !canChangeOrderStatus(currentOrder, "PICKED_UP", user)}
               data-testid="pickup-button"
             >
               <Package className="w-6 h-6 mr-3" />
@@ -647,7 +767,7 @@ const DriverApp = () => {
             <Button
               className="driver-btn bg-green-600 hover:bg-green-700"
               onClick={() => setConfirmAction({ status: "DELIVERED", label: "Confirmați că ați livrat comanda clientului?" })}
-              disabled={isUpdating || !isOnline}
+              disabled={custodyBusy || isUpdating || !isOnline || !statusRecovery.canSubmit(currentOrder) || !canChangeOrderStatus(currentOrder, "DELIVERED", user)}
               data-testid="deliver-button"
             >
               <CheckCircle2 className="w-6 h-6 mr-3" />
@@ -656,12 +776,12 @@ const DriverApp = () => {
           )}
 
           {/* Cancel Button */}
-          {["ASSIGNED", "ACCEPTED"].includes(currentOrder.status) && (
+          {["ASSIGNED", "ACCEPTED"].includes(currentOrder.status) && canChangeOrderStatus(currentOrder, "CANCELLED", user) && (
             <Button
               variant="outline"
               className="w-full text-red-600 border-red-300 hover:bg-red-50 dark:hover:bg-red-950/30 h-12"
               onClick={() => { setCancelDialog(true); setCancelReason(""); }}
-              disabled={isUpdating || isCancellingOrder || !isOnline}
+              disabled={custodyBusy || isUpdating || isCancellingOrder || !isOnline || !statusRecovery.canSubmit(currentOrder) || !canChangeOrderStatus(currentOrder, "CANCELLED", user)}
               data-testid="cancel-order-button"
             >
               <XCircle className="w-5 h-5 mr-2" />
@@ -671,7 +791,14 @@ const DriverApp = () => {
         </div>
       )}
 
-        <nav className="fixed bottom-0 left-1/2 z-50 grid h-20 w-full max-w-md -translate-x-1/2 grid-cols-4 rounded-t-[1.6rem] border-t border-white/10 bg-zinc-950 px-2 pb-2 pt-2" data-testid="driver-bottom-navigation">
+        <nav
+          className="fixed bottom-0 left-1/2 z-50 grid h-20 w-full max-w-md -translate-x-1/2 grid-cols-4 rounded-t-[1.6rem] border-t border-white/10 bg-zinc-950 px-2 pb-2 pt-2"
+          style={{
+            height: "var(--driver-navigation-height)",
+            paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))",
+          }}
+          data-testid="driver-bottom-navigation"
+        >
           {[{ key: "home", label: "Acasă", icon: Home }, { key: "delivery", label: "Livrare", icon: Navigation }, { key: "calendar", label: "Calendar", icon: CalendarDays }, { key: "profile", label: "Profil", icon: User }].map((item) => {
             const Icon = item.icon;
             const active = activeTab === item.key;
@@ -701,7 +828,7 @@ const DriverApp = () => {
             </Button>
             <Button
               onClick={() => updateStatus(confirmAction?.status)}
-              disabled={isUpdating || !isOnline}
+              disabled={custodyBusy || isUpdating || !isOnline || financialRecovery.record || financialRecovery.storageInvalid || (confirmAction?.status === "PICKED_UP" && financialPickupBlocked(currentOrder)) || !statusRecovery.canSubmit(currentOrder) || !canChangeOrderStatus(currentOrder, confirmAction?.status, user)}
               data-testid="confirm-action-btn"
             >
               <CheckCircle2 className="w-4 h-4 mr-2" />
@@ -712,7 +839,7 @@ const DriverApp = () => {
       </Dialog>
 
       {/* Cancel Order Dialog */}
-      <Dialog open={cancelDialog} onOpenChange={setCancelDialog}>
+      <Dialog open={cancelDialog && canChangeOrderStatus(currentOrder, "CANCELLED", user)} onOpenChange={setCancelDialog}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-red-600">
@@ -727,6 +854,8 @@ const DriverApp = () => {
             <Textarea
               placeholder="Scrieți motivul anulării..."
               value={cancelReason}
+              maxLength={500}
+              disabled={custodyBusy || isCancellingOrder || statusRecovery.blocked}
               onChange={(e) => setCancelReason(e.target.value)}
               className="min-h-[100px]"
               data-testid="driver-cancel-reason-input"
@@ -739,7 +868,7 @@ const DriverApp = () => {
             <Button
               variant="destructive"
               onClick={handleCancelOrder}
-              disabled={isCancellingOrder || !cancelReason.trim() || !isOnline}
+              disabled={custodyBusy || isCancellingOrder || !cancelReason.trim() || !isOnline || !statusRecovery.canSubmit(currentOrder) || !canChangeOrderStatus(currentOrder, "CANCELLED", user)}
               data-testid="driver-confirm-cancel-btn"
             >
               <XCircle className="w-4 h-4 mr-2" />

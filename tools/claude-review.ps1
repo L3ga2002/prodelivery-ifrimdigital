@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("quick", "security", "backend", "frontend", "qa", "architect", "fable")]
+    [ValidateSet("quick", "security", "backend", "frontend", "qa", "architect", "opus")]
     [string]$Profile = "quick",
 
     [string]$Task = "Review the current ProDelivery project and report the most important actionable issues.",
@@ -53,11 +53,11 @@ $profiles = @{
         Effort = "high"
         Label = "claude-architecture-review"
     }
-    fable = @{
-        Agent = "ifrim-claude-fable-principal"
-        Model = "fable"
+    opus = @{
+        Agent = "ifrim-claude-opus-principal"
+        Model = "opus"
         Effort = "high"
-        Label = "claude-fable-principal"
+        Label = "claude-opus-principal"
     }
 }
 

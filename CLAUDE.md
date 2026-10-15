@@ -30,9 +30,9 @@ Use these files as project memory. Keep reports compatible with `.ifrim/AGENT_RE
 
 - Use `sonnet` for normal coding, UI changes, focused bug fixes, and everyday reviews.
 - Use `haiku` only for cheap/simple summaries, log triage, or mechanical classification.
-- Use `opus` for architecture, security, database authorization, root-cause debugging, and complex cross-file reasoning.
-- Use `fable` only for the hardest long-running investigations, high-risk migrations, or problems where several previous attempts failed.
-- Do not use `best` or `fable` for trivial changes like button text, spacing, or simple CRUD tweaks.
+- Use `opus` for architecture, security, database authorization, root-cause debugging, complex cross-file reasoning, and the hardest long-running investigations. Treat this as Claude 4.8 Opus / CLI alias `opus`.
+- Fable access is no longer assumed. Do not route new work to `fable`.
+- Do not use `best` or high-effort `opus` for trivial changes like button text, spacing, or simple CRUD tweaks.
 
 ## Expected Report Format
 

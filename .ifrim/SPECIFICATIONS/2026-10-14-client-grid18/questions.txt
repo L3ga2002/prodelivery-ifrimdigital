@@ -1,0 +1,91 @@
+Pentru client — firmă și livrări
+1. La retur, „prețul unei curse de zona 1” înseamnă:
+A. Plata livratorului pentru zona 1.
+B. Tariful de transport achitat de restaurant pentru zona 1.
+C. Ambele: restaurantul achită tariful său, livratorul primește plata sa.
+D. O sumă distinctă pentru retur: ___ RON pentru livrator și ___ RON pentru restaurant.
+2. Cursa inițială nereușită, când clientul refuză sau nu este găsit:
+A. Livratorul primește plata normală, iar restaurantul achită transportul normal.
+B. Livratorul primește plata normală, dar restaurantul nu este taxat pentru această cursă.
+C. Nu se plătește livratorul și nu se taxează restaurantul.
+D. Se aplică sume speciale: livrator ___ RON; restaurant ___ RON.
+3. Plata cursei inițiale nereușite diferă în funcție de soarta produselor?
+A. Nu; aceeași regulă indiferent dacă sunt returnate sau păstrate.
+B. Da; cursa inițială se plătește numai dacă produsele sunt returnate.
+C. Da; cursa inițială se plătește numai dacă restaurantul permite păstrarea produselor.
+D. Există două grile diferite, pe care le comunic separat.
+4. La anularea înainte de ridicare, după depășirea a 50% din drum, compensația este:
+A. Jumătate din plata livratorului pentru zona 1, suportată de restaurant.
+B. Jumătate din plata livratorului pentru zona 1, suportată de firma de livrări.
+C. Jumătate din tariful restaurantului pentru zona 1, suportată de restaurant.
+D. Jumătate din tariful restaurantului pentru zona 1, suportată de firma de livrări.
+5. Dacă livratorul a parcurs cel mult 50% din drum înainte de anulare:
+A. Nu primește compensație.
+B. Primește o sumă fixă: ___ RON, suportată de ___.
+C. Primește o sumă calculată după distanță: ___ RON/km, suportată de ___.
+D. Administratorul stabilește compensația pentru fiecare caz.
+6. Când livratorul nu are suficient numerar, poate pleca cu produsele:
+A. Numai după aprobarea restaurantului în aplicație.
+B. După acordul verbal al restaurantului; aprobarea în aplicație poate urma.
+C. După intervenția administratorului și acordul restaurantului.
+D. Numai după ce găsește banii și achită; declarația din aplicație nu permite plecarea fără plată.
+7. După ridicarea fără plată aprobată de restaurant, livratorul achită restanța:
+A. Imediat după încasarea banilor de la client.
+B. La următoarea ridicare de la acel restaurant.
+C. La finalul programului.
+D. La termenul convenit cu restaurantul și consemnat pentru comandă.
+8. Pentru cele maximum două schimbări de adresă după sosire, suplimentul de peste 2 km se acordă:
+A. Pentru fiecare schimbare eligibilă.
+B. O singură dată, la prima schimbare care depășește 2 km.
+C. O singură dată, dacă distanța cumulată a schimbărilor depășește 2 km.
+D. După o regulă diferită: ___.
+9. La a doua schimbare de adresă, distanța relevantă este:
+A. De la adresa primei schimbări la noua adresă.
+B. De la adresa originală la noua adresă.
+C. Suma deplasărilor suplimentare efectuate după prima sosire.
+D. Altă măsurare: ___.
+10. Pentru o schimbare de adresă de cel mult 2 km, livratorul primește:
+A. Niciun supliment.
+B. Suplimentul normal de zona 1.
+C. Un supliment fix de ___ RON.
+D. Un supliment decis de administrator pentru cazul respectiv.
+11. Cine poate aproba corectarea produselor, sumei bonului sau metodei de plată?
+A. Numai restaurantul.
+B. Numai administratorul.
+C. Restaurantul sau administratorul, cu păstrarea istoricului.
+D. Restaurantul propune, iar administratorul aprobă.
+12. Până când se pot face aceste corectări?
+A. Numai înainte de alocarea livratorului.
+B. Până la ridicarea produselor.
+C. Și după ridicare, dar numai printr-o corecție aprobată, cu evidența diferențelor de bani.
+D. Depinde de câmp: produse ___; sumă ___; metodă de plată ___.
+13. Livratorul cere pauză: A este în curs, B este alocată și gata, C este gata, dar nealocată. Ce termină?
+A. A și B; nu mai primește comenzi noi din momentul cererii.
+B. A, B și C; după includerea lui C nu mai primește alte comenzi.
+C. Numai A; administratorul redistribuie B.
+D. Administratorul stabilește lotul de terminat și oprește alocările noi.
+14. Dacă B era deja alocată, dar încă în pregătire când s-a cerut pauza:
+A. Livratorul o termină și pe B.
+B. B se redistribuie, fără ca livratorul să mai aștepte.
+C. O termină numai dacă este gata în maximum ___ minute.
+D. Administratorul decide în funcție de situație.
+15. Capacitatea de transport se stabilește:
+A. Printr-un număr maxim diferit pentru scuter și mașină: ___ / ___.
+B. După volumul încărcăturii, nu numai după numărul comenzilor.
+C. Prin ambele limite: număr de comenzi și încărcătură.
+D. Individual pentru fiecare vehicul, pe baza capacității declarate și aprobate.
+16. Ce limite folosim pentru așteptare și grupare?
+A. Aceleași pentru toate comenzile: așteptare ___ minute; întârziere suplimentară ___ minute; ridicare–livrare ___ minute.
+B. Limite diferite pe restaurant, comunicate într-un tabel.
+C. Limite diferite după tipul produselor, comunicate într-un tabel.
+D. Limite diferite după restaurant și tipul produselor.
+17. Dacă livratorul nu ajunge și nu poate fi contactat, iar produsele NU sunt ridicate:
+A. Administratorul intervine după ___ minute și poate realoca.
+B. Administratorul intervine imediat după semnalarea restaurantului.
+C. Se încearcă întâi contactarea timp de ___ minute, apoi intervine administratorul.
+D. Se aplică altă procedură: ___.
+18. Limitele geografice de livrare sunt:
+A. Zonele stabilite plus maximum ___ km rutieri în afara lor.
+B. Zonele stabilite plus o listă aprobată de localități.
+C. Zonele stabilite; orice livrare în afara lor necesită aprobarea administratorului.
+D. Limite diferite pentru fiecare restaurant, comunicate separat.

@@ -1,8 +1,10 @@
+import { clientCollectionText, orderAmountLabel } from "../../lib/orderFinance";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
-import { Package } from "lucide-react";
+import { Package, Eye } from "lucide-react";
+import { OrderReadBrowser } from "./OrderReadBrowser";
 
 const getStatusBadge = (status) => {
   const config = {
@@ -30,7 +32,9 @@ const getSourceBadge = (source) => {
   return <Badge className={`${item.className} border-0`} data-testid={`order-source-badge-${source || "unknown"}`}>{item.label}</Badge>;
 };
 
-export const OrdersTab = ({ activeOrders, onAssignOrder }) => (
+export const OrdersTab = ({ activeOrders, onAssignOrder, onInspectOrder, readContext }) => readContext ? (
+  <OrderReadBrowser context={readContext} onAssignOrder={onAssignOrder} onInspectOrder={onInspectOrder} />
+) : (
   <Card className="control-surface overflow-hidden" data-testid="admin-orders-control-surface">
     <CardHeader className="border-b bg-slate-50/70 pb-4 dark:bg-slate-900/50">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -60,6 +64,7 @@ export const OrdersTab = ({ activeOrders, onAssignOrder }) => (
                 <h3 className="truncate text-base font-bold">{order.restaurant_name}</h3>
               </div>
               {getSourceBadge(order.source)}
+              {onInspectOrder && <Button variant="ghost" size="icon" title="Detalii comanda" aria-label="Detalii comanda" onClick={() => onInspectOrder(order)}><Eye className="h-4 w-4" /></Button>}
             </div>
             <div className="mt-3 grid gap-2 text-sm">
               <div className="flex items-center justify-between gap-3">
@@ -71,8 +76,8 @@ export const OrdersTab = ({ activeOrders, onAssignOrder }) => (
                 <span className="font-mono">{order.customer_phone}</span>
               </div>
               <div className="flex items-center justify-between gap-3">
-                <span className="text-muted-foreground">Sumă</span>
-                <span className="font-black">{order.total_amount} RON</span>
+                <span className="text-muted-foreground">{orderAmountLabel(order)}</span>
+                <span className="font-black">{clientCollectionText(order)}</span>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-muted-foreground">Status</span>
@@ -125,12 +130,13 @@ export const OrdersTab = ({ activeOrders, onAssignOrder }) => (
                   </div>
                 </TableCell>
                 <TableCell>
-                  <span className="font-semibold">{order.total_amount} RON</span>
+                  <span className="font-semibold"><span className="block text-xs text-muted-foreground">{orderAmountLabel(order)}</span>{clientCollectionText(order)}</span>
                   <Badge variant="outline" className="ml-2 text-xs">{order.payment_type}</Badge>
                 </TableCell>
                 <TableCell>{getStatusBadge(order.status)}</TableCell>
                 <TableCell>{order.driver_name || "-"}</TableCell>
                 <TableCell className="text-right">
+                  {onInspectOrder && <Button variant="ghost" size="icon" title="Detalii comanda" aria-label="Detalii comanda" onClick={() => onInspectOrder(order)}><Eye className="h-4 w-4" /></Button>}
                   {["NEW", "PREPARING", "READY"].includes(order.status) && (
                     <Button size="sm" className="bg-indigo-700 hover:bg-indigo-600" onClick={() => onAssignOrder(order)} data-testid={`admin-order-assign-button-${order.id}`}>
                       Alocă

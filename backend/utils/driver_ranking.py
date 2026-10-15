@@ -25,7 +25,9 @@ def _safe_parse_iso(value: str | None):
 
 def calculate_driver_score(driver: dict, cancelled_by_driver: int):
     total_deliveries = int(driver.get("total_deliveries", 0) or 0)
-    punctuality_rate = float(driver.get("punctuality_rate", 0.85) or 0.85)
+    punctuality_value = driver.get("punctuality_rate", 0.85)
+    # Zero is a valid rate; only absent or empty values use the default.
+    punctuality_rate = float(0.85 if punctuality_value is None or punctuality_value == "" else punctuality_value)
     handled_orders = max(total_deliveries + cancelled_by_driver, 1)
     cancellation_rate = cancelled_by_driver / handled_orders
 

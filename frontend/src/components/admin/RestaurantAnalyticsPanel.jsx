@@ -1,3 +1,4 @@
+import { clientCollectionText, orderAmountLabel } from "../../lib/orderFinance";
 import { Badge } from "../ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
@@ -124,7 +125,7 @@ export const RestaurantAnalyticsPanel = ({ analytics, isLoading }) => {
               <TableRow>
                 <TableHead>Nr.</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Total</TableHead>
+                <TableHead>Sumă</TableHead>
                 <TableHead>Prep. estimat</TableHead>
                 <TableHead>Prep. real</TableHead>
                 <TableHead>Întârziere</TableHead>
@@ -136,7 +137,7 @@ export const RestaurantAnalyticsPanel = ({ analytics, isLoading }) => {
                 <TableRow key={order.id} data-testid={`restaurant-analytics-order-${order.id}`}>
                   <TableCell className="font-mono text-xs">{order.order_number}</TableCell>
                   <TableCell>{getOrderStatusBadge(order.status)}</TableCell>
-                  <TableCell>{order.total_amount} RON</TableCell>
+                  <TableCell><span className="block text-xs text-muted-foreground">{orderAmountLabel(order)}</span>{clientCollectionText(order)}</TableCell>
                   <TableCell>{order.preparation_time ? `${order.preparation_time} min` : "-"}</TableCell>
                   <TableCell>{order.preparation_actual_minutes != null ? `${order.preparation_actual_minutes} min` : "-"}</TableCell>
                   <TableCell>{order.preparation_delay_minutes != null ? `${order.preparation_delay_minutes} min` : "-"}</TableCell>
